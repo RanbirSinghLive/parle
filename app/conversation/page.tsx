@@ -1,18 +1,35 @@
 "use client";
 
-import { useCallback, useRef, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useRef, useEffect, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Transcript } from "@/components/Transcript";
 import { PushToTalkButton } from "@/components/PushToTalkButton";
+import { SessionSummary } from "@/components/SessionSummary";
 import { useConversationStore } from "@/stores/conversation";
 import { speakText, initVoices } from "@/lib/tts/browser";
 import { createClient } from "@/lib/supabase/client";
+import { TranscriptEntry } from "@/lib/session";
 
-export default function ConversationPage() {
+function ConversationContent() {
+  const searchParams = useSearchParams();
+  const lessonTopic = searchParams.get("topic");
+  // Session state
+  const sessionId = useConversationStore((state) => state.sessionId);
+  const isSessionActive = useConversationStore((state) => state.isSessionActive);
+  const isEndingSession = useConversationStore((state) => state.isEndingSession);
+  const sessionSummary = useConversationStore((state) => state.sessionSummary);
+  const startSession = useConversationStore((state) => state.startSession);
+  const endSession = useConversationStore((state) => state.endSession);
+  const setEndingSession = useConversationStore((state) => state.setEndingSession);
+  const clearSession = useConversationStore((state) => state.clearSession);
+
+  // Conversation state
   const messages = useConversationStore((state) => state.messages);
+  const allCorrections = useConversationStore((state) => state.allCorrections);
   const addMessage = useConversationStore((state) => state.addMessage);
   const setProcessing = useConversationStore((state) => state.setProcessing);
   const setSpeaking = useConversationStore((state) => state.setSpeaking);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const router = useRouter();
@@ -23,8 +40,128 @@ export default function ConversationPage() {
     initVoices();
   }, []);
 
+  // Start a new session when page loads (if not already in one)
+  useEffect(() => {
+    if (!isSessionActive && !sessionSummary) {
+      handleStartSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleStartSession = async (topic?: string | null) => {
+    const sessionTopic = topic ?? lessonTopic;
+    const mode = sessionTopic ? "structured_lesson" : "free_conversation";
+
+    try {
+      const response = await fetch("/api/session/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          lessonTopic: sessionTopic || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to start session");
+      }
+
+      const { sessionId: newSessionId } = await response.json();
+      startSession(newSessionId);
+
+      // If it's a structured lesson, add an initial tutor message about the topic
+      if (sessionTopic) {
+        const greeting = `Bonjour! Today we'll practice "${sessionTopic}". Let's start! Comment allez-vous?`;
+        addMessage({ role: "tutor", content: greeting });
+
+        // Speak the greeting
+        try {
+          const ttsResponse = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: greeting }),
+          });
+
+          const contentType = ttsResponse.headers.get("content-type");
+          if (contentType?.includes("audio/mpeg")) {
+            setSpeaking(true);
+            const audioBuffer = await ttsResponse.arrayBuffer();
+            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            audio.onended = () => {
+              setSpeaking(false);
+              URL.revokeObjectURL(audioUrl);
+            };
+            await audio.play();
+          } else {
+            setSpeaking(true);
+            await speakText(greeting, "fr-FR");
+            setSpeaking(false);
+          }
+        } catch {
+          // Fallback to browser TTS
+          setSpeaking(true);
+          await speakText(greeting, "fr-FR");
+          setSpeaking(false);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to start session:", error);
+      // Continue anyway - we can still have a conversation without persistence
+      startSession("local-" + Date.now());
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!sessionId || isEndingSession) return;
+
+    setEndingSession(true);
+
+    try {
+      // Convert messages to transcript format
+      const transcript: TranscriptEntry[] = messages.map((msg) => ({
+        timestamp: msg.timestamp.toISOString(),
+        speaker: msg.role === "user" ? "user" : "tutor",
+        text: msg.content,
+      }));
+
+      const response = await fetch("/api/session/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          transcript,
+          corrections: allCorrections,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to end session");
+      }
+
+      const { summary } = await response.json();
+      endSession(summary);
+    } catch (error) {
+      console.error("Failed to end session:", error);
+      // Show a basic summary if API fails
+      endSession({
+        durationMinutes: Math.round(
+          (Date.now() - (useConversationStore.getState().sessionStartTime?.getTime() || Date.now())) /
+            60000
+        ),
+        newVocabulary: [],
+        practicedGrammar: [],
+        correctionsCount: allCorrections.length,
+        highlights: "Session completed!",
+        recommendedFocus: ["Keep practicing!"],
+      });
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    clearSession();
     router.push("/login");
     router.refresh();
   };
@@ -106,10 +243,10 @@ export default function ConversationPage() {
           throw new Error("Chat failed");
         }
 
-        const { content: tutorResponse } = await chatResponse.json();
+        const { content: tutorResponse, corrections } = await chatResponse.json();
 
-        // Add tutor response to transcript
-        addMessage({ role: "tutor", content: tutorResponse });
+        // Add tutor response to transcript with any corrections
+        addMessage({ role: "tutor", content: tutorResponse, corrections: corrections || [] });
 
         setProcessing(false);
 
@@ -163,19 +300,42 @@ export default function ConversationPage() {
     mediaRecorder.stop();
   }, [addMessage, setProcessing, setSpeaking, getApiMessages]);
 
+  // Show session summary if session ended
+  if (sessionSummary) {
+    return (
+      <SessionSummary
+        summary={sessionSummary}
+        onStartNewSession={() => {
+          clearSession();
+          handleStartSession();
+        }}
+        onGoToDashboard={() => {
+          clearSession();
+          router.push("/dashboard");
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
       {/* Header */}
       <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-3 shadow-md">
         <div className="flex items-center justify-between">
-          <div className="w-16" /> {/* Spacer for centering */}
+          <button
+            onClick={handleEndSession}
+            disabled={isEndingSession || messages.length === 0}
+            className="text-sm text-primary-200 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isEndingSession ? "Ending..." : "End Session"}
+          </button>
           <div className="text-center">
             <h1 className="text-xl font-semibold">Parle</h1>
             <p className="text-sm text-primary-200">French Tutor</p>
           </div>
           <button
             onClick={handleLogout}
-            className="w-16 text-sm text-primary-200 hover:text-white transition"
+            className="text-sm text-primary-200 hover:text-white transition"
           >
             Logout
           </button>
@@ -193,5 +353,20 @@ export default function ConversationPage() {
         />
       </footer>
     </div>
+  );
+}
+
+// Wrap in Suspense for useSearchParams
+export default function ConversationPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-screen bg-slate-50 dark:bg-slate-900">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+        </div>
+      }
+    >
+      <ConversationContent />
+    </Suspense>
   );
 }

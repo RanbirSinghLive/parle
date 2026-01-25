@@ -1,4 +1,4 @@
-import { ChatMessage, TutorResponse, ClaudeService } from "./types";
+import { ChatMessage, TutorResponse, ClaudeService, LearnerProfile } from "./types";
 
 // Mock responses that simulate a French tutor
 const mockResponses = [
@@ -33,12 +33,21 @@ const mockResponses = [
   {
     content: "Pas de probleme. Voulez-vous que je repete en anglais? I can explain in English if that helps!",
   },
+  // Add a mock correction response
+  {
+    content:
+      "Je suis allé — We use 'être' with 'aller' in passé composé, not 'avoir'. C'était où, ton voyage?",
+  },
 ];
 
 let responseIndex = 0;
 
 export class MockClaudeService implements ClaudeService {
-  async chat(messages: ChatMessage[], userMessage: string): Promise<TutorResponse> {
+  async chat(
+    messages: ChatMessage[],
+    userMessage: string,
+    profile?: LearnerProfile | null
+  ): Promise<TutorResponse> {
     // Simulate API delay
     await new Promise((resolve) => setTimeout(resolve, 500 + Math.random() * 500));
 
@@ -48,6 +57,7 @@ export class MockClaudeService implements ClaudeService {
 
     return {
       content: response.content,
+      corrections: [],
     };
   }
 }

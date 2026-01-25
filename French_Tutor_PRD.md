@@ -428,43 +428,50 @@ parle/
 
 ## 11. Development Phases
 
-### Phase 1: Foundation (Week 1-2)
-- [ ] Set up Next.js project with TypeScript
-- [ ] Configure Supabase (auth, database schema)
-- [ ] Build basic auth flow (signup, login, logout)
-- [ ] Create dashboard skeleton
-- [ ] Set up PWA configuration (manifest, service worker)
+### Phase 1: Foundation ✅ COMPLETE
+- [x] Set up Next.js project with TypeScript
+- [x] Configure Supabase (auth, database schema)
+- [x] Build basic auth flow (signup, login, logout, Google OAuth)
+- [x] Set up PWA configuration (manifest.json configured)
+- [ ] Create dashboard with streak display, session stats *(partial - conversation page exists)*
+- [ ] Add PWA icons and service worker for offline support
 
-### Phase 2: Voice Pipeline (Week 2-3)
-- [ ] Integrate Deepgram for STT (WebSocket streaming)
-- [ ] Integrate ElevenLabs for TTS
-- [ ] Build VoiceRecorder component with push-to-talk
-- [ ] Build AudioPlayer component for TTS playback
-- [ ] Test end-to-end voice loop (speak → transcribe → play response)
+### Phase 2: Voice Pipeline ✅ COMPLETE
+- [x] Integrate Deepgram for STT (HTTP API with French support)
+- [x] Integrate ElevenLabs for TTS (with browser Web Speech API fallback)
+- [x] Build VoiceRecorder component with push-to-talk (mouse, touch, keyboard)
+- [x] Build AudioPlayer component for TTS playback
+- [x] Test end-to-end voice loop (speak → transcribe → Claude → TTS → play)
 
-### Phase 3: AI Conversation (Week 3-4)
-- [ ] Integrate Claude API
-- [ ] Build system prompt with profile injection
-- [ ] Implement conversation flow (message → response)
-- [ ] Add correction detection and formatting
-- [ ] Test conversation quality and latency
+### Phase 3: AI Conversation ✅ COMPLETE
+- [x] Integrate Claude API (claude-sonnet-4-5-20250929)
+- [x] Build system prompt for French tutor persona
+- [x] Implement conversation flow (message → response with full history)
+- [x] Add dynamic profile injection into system prompt (user level, vocabulary, weaknesses)
+- [x] Add correction parsing and extraction from Claude responses
+- [x] Store corrections in conversation state (ready for session persistence)
 
-### Phase 4: Session Management (Week 4-5)
-- [ ] Implement session start/end flow
-- [ ] Build session compression with Claude
-- [ ] Create profile update logic
-- [ ] Build session summary UI
-- [ ] Test profile persistence across sessions
+### Phase 4: Session Management ✅ COMPLETE
+- [x] Implement session start flow (create session record on conversation start)
+- [x] Implement session end flow (save transcript, trigger compression)
+- [x] Build session compression with Claude (extract vocabulary, grammar, corrections)
+- [x] Create profile update logic (merge session learnings into learner profile)
+- [x] Build session summary UI (end-of-session stats and highlights)
+- [x] Implement streak tracking logic
 
-### Phase 5: Polish & Modes (Week 5-6)
-- [ ] Add structured lesson mode
-- [ ] Build lesson topic selection
-- [ ] Add session history view
-- [ ] Implement settings page
-- [ ] Add streak tracking and basic gamification
+### Phase 5: Polish & Modes 🔲 NOT STARTED
+- [ ] Add structured lesson mode with topic selection
+- [ ] Build lesson topic picker UI
+- [ ] Add session history view (`/history` page)
+- [ ] Implement settings page (`/settings` page)
+  - [ ] Correction style preference
+  - [ ] TTS speed adjustment
+  - [ ] Target level selection (A1-C2)
+  - [ ] Daily goal minutes
+- [ ] Add streak display and basic gamification
 - [ ] Mobile UI polish and testing
 
-### Phase 6: Launch (Week 6+)
+### Phase 6: Launch 🔲 NOT STARTED
 - [ ] Deploy to Vercel
 - [ ] Test on actual iPhone via Safari
 - [ ] Add to Home Screen, verify PWA behavior

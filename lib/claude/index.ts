@@ -2,8 +2,16 @@ import { ClaudeService } from "./types";
 import { mockClaude } from "./mock";
 import { createClaudeService } from "./client";
 
-export type { ChatMessage, TutorResponse, ClaudeService } from "./types";
-export { FRENCH_TUTOR_SYSTEM_PROMPT } from "./prompts";
+export type {
+  ChatMessage,
+  TutorResponse,
+  ClaudeService,
+  LearnerProfile,
+  Correction,
+  VocabularyEntry,
+  GrammarEntry,
+} from "./types";
+export { FRENCH_TUTOR_SYSTEM_PROMPT, buildSystemPrompt } from "./prompts";
 
 let claudeService: ClaudeService | null = null;
 

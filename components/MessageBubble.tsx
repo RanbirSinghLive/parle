@@ -6,6 +6,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const hasCorrections = message.corrections && message.corrections.length > 0;
 
   return (
     <div
@@ -16,7 +17,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           isUser
             ? "bg-primary-600 text-white rounded-br-md"
             : "bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 rounded-bl-md shadow-sm border border-slate-200 dark:border-slate-600"
-        } ${message.isCorrection ? "border-l-4 border-l-amber-400" : ""}`}
+        } ${hasCorrections ? "border-l-4 border-l-amber-400" : ""}`}
       >
         <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
           {message.content}
@@ -29,6 +30,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           }`}
         >
           {formatTime(message.timestamp)}
+          {hasCorrections && (
+            <span className="ml-2 text-amber-500">
+              ({message.corrections!.length} correction{message.corrections!.length > 1 ? "s" : ""})
+            </span>
+          )}
         </p>
       </div>
     </div>
