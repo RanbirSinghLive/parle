@@ -1,0 +1,10 @@
+{
+  "name": "Parle - French Tutor",
+  "short_name": "Parle",
+  "description": "Voice-first French tutoring with AI",
+  "start_url": "/conversation",
+  "display": "standalone",
+  "background_color": "#1e40af",
+  "theme_color": "#1e40af",
+  "orientation": "portrait"
+}
