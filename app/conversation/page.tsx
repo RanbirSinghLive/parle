@@ -320,19 +320,16 @@ function ConversationContent() {
   return (
     <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
       {/* Header */}
-      <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-3 shadow-md">
+      <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-2 shadow-md">
         <div className="flex items-center justify-between">
           <button
             onClick={handleEndSession}
             disabled={isEndingSession || messages.length === 0}
             className="text-sm text-primary-200 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isEndingSession ? "Ending..." : "End Session"}
+            {isEndingSession ? "Ending..." : "End"}
           </button>
-          <div className="text-center">
-            <h1 className="text-xl font-semibold">Parle</h1>
-            <p className="text-sm text-primary-200">French Tutor</p>
-          </div>
+          <h1 className="text-lg font-semibold">Parle</h1>
           <button
             onClick={handleLogout}
             className="text-sm text-primary-200 hover:text-white transition"
@@ -346,7 +343,7 @@ function ConversationContent() {
       <Transcript />
 
       {/* Push-to-talk button area */}
-      <footer className="flex-shrink-0 p-4 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
+      <footer className="flex-shrink-0 px-4 py-3 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
         <PushToTalkButton
           onRecordingStart={handleRecordingStart}
           onRecordingStop={handleRecordingStop}
