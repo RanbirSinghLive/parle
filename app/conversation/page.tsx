@@ -41,6 +41,60 @@ function ConversationContent() {
     initVoices();
   }, []);
 
+  // Fix iOS viewport height issue - ensure button is always visible
+  useEffect(() => {
+    console.log("[Conversation] Setting up iOS viewport height fix");
+    console.log("[Conversation] User agent:", navigator.userAgent);
+    console.log("[Conversation] Initial window.innerHeight:", window.innerHeight, "px");
+    console.log("[Conversation] Initial window.visualViewport?.height:", window.visualViewport?.height, "px");
+    
+    const setViewportHeight = () => {
+      // Use visualViewport if available (better for iOS), otherwise fall back to innerHeight
+      const vh = window.visualViewport?.height || window.innerHeight;
+      console.log("[Conversation] Current viewport height:", vh, "px (visualViewport:", window.visualViewport?.height, "innerHeight:", window.innerHeight, ")");
+      
+      // Set CSS custom property for dynamic viewport height
+      const vhValue = `${vh * 0.01}px`;
+      document.documentElement.style.setProperty('--vh', vhValue);
+      console.log("[Conversation] Set --vh CSS variable to:", vhValue);
+      
+      // Log the computed height of the main container for debugging
+      const mainContainer = document.querySelector('[data-conversation-container]');
+      if (mainContainer) {
+        const computedHeight = window.getComputedStyle(mainContainer).height;
+        console.log("[Conversation] Main container computed height:", computedHeight);
+      }
+    };
+
+    // Set initial height with a small delay to ensure accurate measurement
+    setTimeout(setViewportHeight, 0);
+
+    // Update on resize (handles iOS Safari address bar show/hide)
+    window.addEventListener('resize', setViewportHeight);
+    window.addEventListener('orientationchange', () => {
+      console.log("[Conversation] Orientation changed, updating viewport height");
+      // Small delay to ensure accurate height after orientation change
+      setTimeout(setViewportHeight, 100);
+    });
+
+    // Also listen for visual viewport changes (better for iOS)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', setViewportHeight);
+      window.visualViewport.addEventListener('scroll', setViewportHeight);
+      console.log("[Conversation] Added visualViewport resize and scroll listeners");
+    }
+
+    return () => {
+      window.removeEventListener('resize', setViewportHeight);
+      window.removeEventListener('orientationchange', setViewportHeight);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', setViewportHeight);
+        window.visualViewport.removeEventListener('scroll', setViewportHeight);
+      }
+      console.log("[Conversation] Cleaned up viewport height listeners");
+    };
+  }, []);
+
   // Request microphone permission early and keep stream alive
   // This helps iOS PWAs maintain permission between sessions
   useEffect(() => {
@@ -584,9 +638,20 @@ function ConversationContent() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
+    <div 
+      className="flex flex-col bg-slate-50 dark:bg-slate-900" 
+      data-conversation-container
+      style={{ 
+        height: 'calc(var(--vh, 1vh) * 100)',
+        minHeight: '-webkit-fill-available',
+        minHeight: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden'
+      }}
+    >
       {/* Header */}
-      <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-2 shadow-md">
+      <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-2 shadow-md" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
         <div className="flex items-center justify-between">
           <button
             onClick={handleEndSession}
@@ -609,7 +674,14 @@ function ConversationContent() {
       <Transcript />
 
       {/* Push-to-talk button area */}
-      <footer className="flex-shrink-0 px-4 py-3 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700">
+      <footer 
+        className="flex-shrink-0 px-4 py-3 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700"
+        style={{ 
+          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))'
+        }}
+      >
         <PushToTalkButton
           onRecordingStart={handleRecordingStart}
           onRecordingStop={handleRecordingStop}

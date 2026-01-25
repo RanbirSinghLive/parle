@@ -10,6 +10,8 @@
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-inset-left: env(safe-area-inset-left, 0px);
   --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  /* Dynamic viewport height for iOS (set via JavaScript) */
+  --vh: 1vh;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,6 +24,8 @@
 html {
   /* Prevent pull-to-refresh on mobile */
   overscroll-behavior: none;
+  /* Use dynamic viewport height for iOS Safari */
+  height: -webkit-fill-available;
 }
 
 body {
@@ -32,11 +36,12 @@ body {
   /* Prevent text selection on double tap */
   -webkit-user-select: none;
   user-select: none;
-  /* Safe area padding */
-  padding-top: var(--safe-area-inset-top);
-  padding-bottom: var(--safe-area-inset-bottom);
-  padding-left: var(--safe-area-inset-left);
-  padding-right: var(--safe-area-inset-right);
+  /* Use dynamic viewport height for iOS Safari */
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+  min-height: 100dvh;
+  /* Remove body padding - safe areas handled per component */
+  padding: 0;
 }
 
 /* Allow text selection in input fields and text areas */
