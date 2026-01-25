@@ -2,7 +2,7 @@
 
 **Project Name:** Parle (French for "Speak")
 **Version:** 1.0
-**Date:** January 24, 2026
+**Date:** January 25, 2026 (Updated)
 **Author:** Ranbir Singh
 
 ---
@@ -433,7 +433,7 @@ parle/
 - [x] Configure Supabase (auth, database schema)
 - [x] Build basic auth flow (signup, login, logout, Google OAuth)
 - [x] Set up PWA configuration (manifest.json configured)
-- [ ] Create dashboard with streak display, session stats *(partial - conversation page exists)*
+- [x] Create dashboard with streak display, session stats
 - [ ] Add PWA icons and service worker for offline support
 
 ### Phase 2: Voice Pipeline ✅ COMPLETE
@@ -459,20 +459,32 @@ parle/
 - [x] Build session summary UI (end-of-session stats and highlights)
 - [x] Implement streak tracking logic
 
-### Phase 5: Polish & Modes 🔲 NOT STARTED
-- [ ] Add structured lesson mode with topic selection
-- [ ] Build lesson topic picker UI
-- [ ] Add session history view (`/history` page)
-- [ ] Implement settings page (`/settings` page)
-  - [ ] Correction style preference
-  - [ ] TTS speed adjustment
-  - [ ] Target level selection (A1-C2)
-  - [ ] Daily goal minutes
-- [ ] Add streak display and basic gamification
-- [ ] Mobile UI polish and testing
+### Phase 5: Polish & Modes ✅ COMPLETE
+- [x] Add structured lesson mode with topic selection
+- [x] Build lesson topic picker UI (LessonPicker component with 4 categories: Basics, Daily Life, Grammar Focus, Conversation)
+- [x] Add session history view (`/history` page with expandable session details)
+- [x] Implement settings page (`/settings` page)
+  - [x] Display name
+  - [x] Target level selection (A1-C2)
+  - [x] Daily goal minutes (5-60 min slider)
+  - [x] Push notification toggle (placeholder)
+- [x] Add dashboard page (`/dashboard`) with:
+  - [x] Streak display
+  - [x] Daily goal progress bar
+  - [x] Total practice minutes
+  - [x] Recent sessions list
+  - [x] Quick stats
+- [x] Mobile UI polish:
+  - [x] Safe area insets for notched devices
+  - [x] 48px minimum touch targets
+  - [x] Haptic feedback on interactions
+  - [x] Pull-to-refresh prevention
+  - [x] Improved empty states
 
-### Phase 6: Launch 🔲 NOT STARTED
-- [ ] Deploy to Vercel
+### Phase 6: Launch 🟡 IN PROGRESS
+- [x] Deploy to Vercel (https://parle-beta.vercel.app)
+- [x] Configure environment variables on Vercel
+- [x] Set up Google OAuth redirect URLs
 - [ ] Test on actual iPhone via Safari
 - [ ] Add to Home Screen, verify PWA behavior
 - [ ] Monitor costs and optimize if needed
@@ -532,3 +544,4 @@ You'll learn the codebase as you build it, and can always ask "explain what this
 ---
 
 *Document generated for Ranbir Singh — January 24, 2026*
+*Last updated: January 25, 2026 — Phase 5 complete, Phase 6 in progress*
