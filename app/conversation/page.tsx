@@ -10,6 +10,104 @@ import { speakText, initVoices } from "@/lib/tts/browser";
 import { createClient } from "@/lib/supabase/client";
 import { TranscriptEntry } from "@/lib/session";
 
+// iOS audio unlock - create a silent audio context to enable playback after async operations
+let audioContextUnlocked = false;
+let silentAudioElement: HTMLAudioElement | null = null;
+
+function unlockAudioForIOS() {
+  if (audioContextUnlocked) return;
+
+  console.log("[iOS Audio] Attempting to unlock audio context");
+
+  // Method 1: Create and play a silent Audio element
+  try {
+    silentAudioElement = new Audio();
+    // Data URI for a tiny silent MP3
+    silentAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
+    silentAudioElement.volume = 0.01;
+    const playPromise = silentAudioElement.play();
+    if (playPromise) {
+      playPromise.then(() => {
+        console.log("[iOS Audio] Silent audio played - audio context unlocked");
+        audioContextUnlocked = true;
+        silentAudioElement?.pause();
+      }).catch((e) => {
+        console.log("[iOS Audio] Silent audio play failed:", e.message);
+      });
+    }
+  } catch (e) {
+    console.log("[iOS Audio] Audio element method failed:", e);
+  }
+
+  // Method 2: Create an AudioContext
+  try {
+    const AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
+    if (AudioContext) {
+      const ctx = new AudioContext();
+      if (ctx.state === "suspended") {
+        ctx.resume().then(() => {
+          console.log("[iOS Audio] AudioContext resumed");
+          audioContextUnlocked = true;
+        });
+      } else {
+        console.log("[iOS Audio] AudioContext already running");
+        audioContextUnlocked = true;
+      }
+    }
+  } catch (e) {
+    console.log("[iOS Audio] AudioContext method failed:", e);
+  }
+}
+
+// Helper to play audio with iOS-friendly retry logic
+async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
+  console.log("[Audio Playback] Starting playback, buffer size:", audioBuffer.byteLength);
+
+  const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+  const audioUrl = URL.createObjectURL(blob);
+  const audio = new Audio();
+
+  // iOS needs load() to be called explicitly
+  audio.src = audioUrl;
+  audio.load();
+
+  return new Promise((resolve, reject) => {
+    audio.onended = () => {
+      console.log("[Audio Playback] Audio ended");
+      URL.revokeObjectURL(audioUrl);
+      resolve();
+    };
+
+    audio.onerror = (e) => {
+      console.error("[Audio Playback] Audio error:", e, audio.error);
+      URL.revokeObjectURL(audioUrl);
+      reject(new Error(audio.error?.message || "Audio playback failed"));
+    };
+
+    audio.oncanplaythrough = () => {
+      console.log("[Audio Playback] Can play through, starting playback");
+      const playPromise = audio.play();
+      if (playPromise) {
+        playPromise.catch((e) => {
+          console.error("[Audio Playback] Play promise rejected:", e);
+          URL.revokeObjectURL(audioUrl);
+          reject(e);
+        });
+      }
+    };
+
+    // Fallback: try playing after a short delay if oncanplaythrough doesn't fire
+    setTimeout(() => {
+      if (audio.paused && audio.readyState >= 2) {
+        console.log("[Audio Playback] Fallback: attempting play after timeout");
+        audio.play().catch((e) => {
+          console.error("[Audio Playback] Fallback play failed:", e);
+        });
+      }
+    }, 500);
+  });
+}
+
 // Helper to get the best supported audio MIME type for the current browser
 function getSupportedAudioMimeType(): string {
   // Order of preference: WebM (Chrome/Firefox), MP4 (Safari/iOS), then fallback
@@ -247,46 +345,20 @@ function ConversationContent() {
             setSpeaking(true);
             const audioBuffer = await ttsResponse.arrayBuffer();
             console.log("[Conversation] Greeting audio buffer size:", audioBuffer.byteLength, "bytes");
-            
+
             if (audioBuffer.byteLength === 0) {
               console.error("[Conversation] Empty audio buffer for greeting");
               throw new Error("Empty audio buffer");
             }
-            
-            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-            const audioUrl = URL.createObjectURL(blob);
-            const audio = new Audio(audioUrl);
-            
-            // Set up event handlers
-            audio.onended = () => {
-              console.log("[Conversation] Greeting audio playback ended");
+
+            try {
+              await playAudioWithRetry(audioBuffer);
+              console.log("[Conversation] Greeting audio playback completed");
+            } catch (playError) {
+              console.error("[Conversation] Greeting audio playback failed:", playError);
+              throw playError;
+            } finally {
               setSpeaking(false);
-              URL.revokeObjectURL(audioUrl);
-            };
-            audio.onerror = (error) => {
-              console.error("[Conversation] Greeting audio playback error:", error);
-              console.error("[Conversation] Greeting audio error details:", {
-                code: audio.error?.code,
-                message: audio.error?.message,
-              });
-              setSpeaking(false);
-              URL.revokeObjectURL(audioUrl);
-            };
-            audio.oncanplay = () => {
-              console.log("[Conversation] Greeting audio can play");
-            };
-            audio.onloadeddata = () => {
-              console.log("[Conversation] Greeting audio data loaded");
-            };
-            
-            // Wait for audio to be ready
-            const playPromise = audio.play();
-            if (playPromise !== undefined) {
-              await playPromise;
-              console.log("[Conversation] Greeting audio play() called successfully");
-            } else {
-              // Fallback for older browsers
-              console.log("[Conversation] Greeting audio play() called (legacy)");
             }
           } else {
             console.log("[Conversation] Falling back to browser TTS for greeting");
@@ -394,6 +466,9 @@ function ConversationContent() {
   }, [messages]);
 
   const handleRecordingStart = useCallback(async () => {
+    // Unlock audio for iOS - must happen during user gesture
+    unlockAudioForIOS();
+
     try {
       console.log("[Conversation] Starting recording...");
       console.log("[Conversation] User agent:", navigator.userAgent);
@@ -472,8 +547,10 @@ function ConversationContent() {
         console.log("[Conversation] MediaRecorder started, state:", mediaRecorder.state, "mimeType:", mediaRecorder.mimeType);
       };
 
-      mediaRecorder.start();
-      console.log("[Conversation] Recording started successfully with mimeType:", mediaRecorder.mimeType);
+      // Start recording with timeslice for better iOS compatibility
+      // This ensures we get data chunks more frequently
+      mediaRecorder.start(1000); // Request data every 1 second
+      console.log("[Conversation] Recording started successfully with mimeType:", mediaRecorder.mimeType, "(timeslice: 1000ms)");
     } catch (error) {
       console.error("[Conversation] Failed to start recording:", error);
       if (error instanceof Error) {
@@ -499,7 +576,9 @@ function ConversationContent() {
 
     mediaRecorder.onstop = async () => {
       console.log("[Conversation] MediaRecorder stopped, processing audio");
-      
+      console.log("[Conversation] Number of audio chunks:", audioChunksRef.current.length);
+      console.log("[Conversation] Audio chunks sizes:", audioChunksRef.current.map(c => c.size));
+
       // IMPORTANT: Don't stop tracks here - keep them alive for iOS PWA permission persistence
       // iOS revokes microphone permissions if tracks are stopped immediately after recording
       // We'll keep the stream alive and only stop tracks on component unmount
@@ -509,9 +588,23 @@ function ConversationContent() {
       // This is critical for iOS which uses audio/mp4 instead of audio/webm
       const actualMimeType = audioMimeTypeRef.current || mediaRecorder.mimeType || "audio/webm";
       console.log("[Conversation] Creating audio blob with MIME type:", actualMimeType);
-      
+
+      // Check if we have any audio data
+      if (audioChunksRef.current.length === 0) {
+        console.error("[Conversation] No audio chunks recorded!");
+        setProcessing(false);
+        return;
+      }
+
       const audioBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
       console.log("[Conversation] Audio blob created, size:", audioBlob.size, "bytes, type:", audioBlob.type);
+
+      // Validate audio blob
+      if (audioBlob.size === 0) {
+        console.error("[Conversation] Audio blob is empty!");
+        setProcessing(false);
+        return;
+      }
 
       setProcessing(true);
 
@@ -587,56 +680,20 @@ function ConversationContent() {
             setSpeaking(true);
             const audioBuffer = await ttsResponse.arrayBuffer();
             console.log("[Conversation] Audio buffer size:", audioBuffer.byteLength, "bytes");
-            
+
             if (audioBuffer.byteLength === 0) {
               console.error("[Conversation] Empty audio buffer received");
               throw new Error("Empty audio buffer");
             }
-            
-            const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
-            const audioUrl = URL.createObjectURL(blob);
-            const audio = new Audio(audioUrl);
 
-            // Set up event handlers
-            audio.onended = () => {
-              console.log("[Conversation] Audio playback ended");
-              setSpeaking(false);
-              URL.revokeObjectURL(audioUrl);
-            };
-            audio.onerror = (error) => {
-              console.error("[Conversation] Audio playback error:", error);
-              console.error("[Conversation] Audio error details:", {
-                code: audio.error?.code,
-                message: audio.error?.message,
-              });
-              setSpeaking(false);
-              URL.revokeObjectURL(audioUrl);
-            };
-            audio.onloadstart = () => {
-              console.log("[Conversation] Audio loading started");
-            };
-            audio.oncanplay = () => {
-              console.log("[Conversation] Audio can play");
-            };
-            audio.onloadeddata = () => {
-              console.log("[Conversation] Audio data loaded");
-            };
-
-            // Wait for audio to be ready and play
             try {
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                await playPromise;
-                console.log("[Conversation] Audio play() called successfully");
-              } else {
-                // Fallback for older browsers
-                console.log("[Conversation] Audio play() called (legacy)");
-              }
+              await playAudioWithRetry(audioBuffer);
+              console.log("[Conversation] Audio playback completed");
             } catch (playError) {
-              console.error("[Conversation] Error calling audio.play():", playError);
-              setSpeaking(false);
-              URL.revokeObjectURL(audioUrl);
+              console.error("[Conversation] Audio playback failed:", playError);
               throw playError;
+            } finally {
+              setSpeaking(false);
             }
           } else {
             // Use browser TTS
