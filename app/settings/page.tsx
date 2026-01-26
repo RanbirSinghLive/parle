@@ -12,6 +12,7 @@ interface UserSettings {
   tts_speed: number;
   target_level: "A1" | "A2" | "B1" | "B2" | "C1" | "C2";
   daily_goal_minutes: number;
+  tutor_name?: string;
 }
 
 interface Profile {
@@ -198,6 +199,31 @@ export default function SettingsPage() {
               <label className="text-sm text-slate-600 dark:text-slate-400">Total Practice</label>
               <p className="text-slate-900 dark:text-white">
                 {profile.total_practice_minutes} minutes ({profile.streak_days} day streak)
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Tutor Name */}
+        <section className="bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-200 dark:border-slate-700">
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-4">
+            Your Tutor
+          </h2>
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm text-slate-600 dark:text-slate-400 block mb-1">
+                Tutor Name
+              </label>
+              <input
+                type="text"
+                value={profile.settings.tutor_name || ""}
+                onChange={(e) => updateSettings({ tutor_name: e.target.value || undefined })}
+                placeholder="Parle"
+                disabled={saving}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
+              />
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Your tutor will introduce themselves with this name
               </p>
             </div>
           </div>

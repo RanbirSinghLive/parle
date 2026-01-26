@@ -10,6 +10,29 @@ import { speakText, initVoices } from "@/lib/tts/browser";
 import { createClient } from "@/lib/supabase/client";
 import { TranscriptEntry } from "@/lib/session";
 
+// Helper to get the best supported audio MIME type for the current browser
+function getSupportedAudioMimeType(): string {
+  // Order of preference: WebM (Chrome/Firefox), MP4 (Safari/iOS), then fallback
+  const mimeTypes = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/aac",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+  ];
+
+  for (const mimeType of mimeTypes) {
+    if (MediaRecorder.isTypeSupported(mimeType)) {
+      console.log("[Audio] Supported MIME type found:", mimeType);
+      return mimeType;
+    }
+  }
+
+  console.warn("[Audio] No preferred MIME type supported, using browser default");
+  return "";
+}
+
 function ConversationContent() {
   const searchParams = useSearchParams();
   const lessonTopic = searchParams.get("topic");
@@ -33,6 +56,7 @@ function ConversationContent() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioMimeTypeRef = useRef<string>(""); // Store the actual MIME type being used
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
 
@@ -372,15 +396,34 @@ function ConversationContent() {
   const handleRecordingStart = useCallback(async () => {
     try {
       console.log("[Conversation] Starting recording...");
+      console.log("[Conversation] User agent:", navigator.userAgent);
       
       // Reuse existing stream if available, otherwise request new one
       let stream = audioStreamRef.current;
       
       if (!stream || stream.getTracks().every(track => track.readyState === "ended")) {
         console.log("[Conversation] No active stream, requesting new microphone access");
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Request audio with quality constraints for better transcription
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            // Request 16kHz sample rate (ideal for speech recognition)
+            // Browsers may not honor this but it's a hint
+            sampleRate: { ideal: 16000 },
+            channelCount: { ideal: 1 }, // Mono is better for speech
+          } 
+        });
         audioStreamRef.current = stream;
         console.log("[Conversation] New microphone stream obtained");
+        
+        // Log audio track settings for debugging
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack) {
+          const settings = audioTrack.getSettings();
+          console.log("[Conversation] Audio track settings:", JSON.stringify(settings));
+        }
       } else {
         console.log("[Conversation] Reusing existing microphone stream");
         // Ensure tracks are enabled
@@ -392,20 +435,31 @@ function ConversationContent() {
         });
       }
 
-      // Check if MediaRecorder is supported
-      if (!MediaRecorder.isTypeSupported("audio/webm") && !MediaRecorder.isTypeSupported("audio/mp4")) {
-        console.warn("[Conversation] MediaRecorder may not support preferred formats");
-      }
+      // Detect the best supported MIME type for this browser/device
+      const supportedMimeType = getSupportedAudioMimeType();
+      console.log("[Conversation] Using MIME type:", supportedMimeType || "browser default");
+      
+      // Store the MIME type for later use when creating the blob
+      audioMimeTypeRef.current = supportedMimeType;
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : undefined,
-      });
+      // Create MediaRecorder with the detected MIME type
+      const mediaRecorderOptions: MediaRecorderOptions = {};
+      if (supportedMimeType) {
+        mediaRecorderOptions.mimeType = supportedMimeType;
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, mediaRecorderOptions);
+      
+      // Log the actual MIME type being used (may differ from requested)
+      console.log("[Conversation] MediaRecorder created with mimeType:", mediaRecorder.mimeType);
+      audioMimeTypeRef.current = mediaRecorder.mimeType; // Use actual mimeType from recorder
+      
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          console.log("[Conversation] Received audio chunk:", event.data.size, "bytes");
+          console.log("[Conversation] Received audio chunk:", event.data.size, "bytes, type:", event.data.type);
           audioChunksRef.current.push(event.data);
         }
       };
@@ -415,11 +469,11 @@ function ConversationContent() {
       };
 
       mediaRecorder.onstart = () => {
-        console.log("[Conversation] MediaRecorder started, state:", mediaRecorder.state);
+        console.log("[Conversation] MediaRecorder started, state:", mediaRecorder.state, "mimeType:", mediaRecorder.mimeType);
       };
 
       mediaRecorder.start();
-      console.log("[Conversation] Recording started successfully");
+      console.log("[Conversation] Recording started successfully with mimeType:", mediaRecorder.mimeType);
     } catch (error) {
       console.error("[Conversation] Failed to start recording:", error);
       if (error instanceof Error) {
@@ -451,8 +505,13 @@ function ConversationContent() {
       // We'll keep the stream alive and only stop tracks on component unmount
       console.log("[Conversation] Keeping audio stream alive for permission persistence (iOS PWA workaround)");
 
-      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-      console.log("[Conversation] Audio blob created, size:", audioBlob.size, "bytes");
+      // Use the actual MIME type from the MediaRecorder, not a hardcoded value
+      // This is critical for iOS which uses audio/mp4 instead of audio/webm
+      const actualMimeType = audioMimeTypeRef.current || mediaRecorder.mimeType || "audio/webm";
+      console.log("[Conversation] Creating audio blob with MIME type:", actualMimeType);
+      
+      const audioBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
+      console.log("[Conversation] Audio blob created, size:", audioBlob.size, "bytes, type:", audioBlob.type);
 
       setProcessing(true);
 
@@ -641,9 +700,8 @@ function ConversationContent() {
     <div 
       className="flex flex-col bg-slate-50 dark:bg-slate-900" 
       data-conversation-container
-      style={{ 
+      style={{
         height: 'calc(var(--vh, 1vh) * 100)',
-        minHeight: '-webkit-fill-available',
         minHeight: '100dvh',
         display: 'flex',
         flexDirection: 'column',

@@ -6,6 +6,21 @@ import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { LessonPicker } from "@/components/LessonPicker";
+import { TroubleWordsCard } from "@/components/TroubleWordsCard";
+import { WeaknessesCard } from "@/components/WeaknessesCard";
+import { GrammarCard } from "@/components/GrammarCard";
+import { TopicsCard } from "@/components/TopicsCard";
+import { RecommendedFocusCard } from "@/components/RecommendedFocusCard";
+import {
+  getTroubleWords,
+  aggregateTopics,
+  getRecommendedFocus,
+  VocabularyEntry,
+  GrammarEntry,
+  TroubleWord,
+  TopicSummary,
+  SessionWithSummary,
+} from "@/lib/utils/progress";
 
 interface Profile {
   display_name: string | null;
@@ -13,6 +28,9 @@ interface Profile {
   total_practice_minutes: number;
   streak_days: number;
   last_session_date: string | null;
+  vocabulary: VocabularyEntry[];
+  grammar: GrammarEntry[];
+  weaknesses: string[];
   settings: {
     daily_goal_minutes: number;
   };
@@ -21,20 +39,39 @@ interface Profile {
 interface RecentSession {
   id: string;
   started_at: string;
+  lesson_topic: string | null;
   summary: {
     durationMinutes: number;
     correctionsCount: number;
+    recommendedFocus?: string[];
   } | null;
 }
 
 export default function DashboardPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+  const [allSessions, setAllSessions] = useState<RecentSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [todayMinutes, setTodayMinutes] = useState(0);
   const [showLessonPicker, setShowLessonPicker] = useState(false);
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+
+  // Derived progress data
+  const troubleWords = useMemo<TroubleWord[]>(
+    () => getTroubleWords(profile?.vocabulary || []),
+    [profile?.vocabulary]
+  );
+
+  const topicSummaries = useMemo<TopicSummary[]>(
+    () => aggregateTopics(allSessions as SessionWithSummary[]),
+    [allSessions]
+  );
+
+  const recommendedFocus = useMemo<string[]>(
+    () => getRecommendedFocus(allSessions as SessionWithSummary[]),
+    [allSessions]
+  );
 
   useEffect(() => {
     fetchData();
@@ -59,6 +96,7 @@ export default function DashboardPage() {
       const sessionsResponse = await fetch("/api/sessions");
       if (sessionsResponse.ok) {
         const { sessions } = await sessionsResponse.json();
+        setAllSessions(sessions);
         setRecentSessions(sessions.slice(0, 3));
 
         // Calculate today's practice time
@@ -241,6 +279,13 @@ export default function DashboardPage() {
             <p className="text-sm text-slate-600 dark:text-slate-400">Recent Corrections</p>
           </div>
         </div>
+
+        {/* Progress Section */}
+        <TroubleWordsCard troubleWords={troubleWords} />
+        <WeaknessesCard weaknesses={profile?.weaknesses || []} />
+        <GrammarCard grammar={profile?.grammar || []} />
+        <TopicsCard topics={topicSummaries} />
+        <RecommendedFocusCard recommendations={recommendedFocus} />
 
         {/* Recent Sessions */}
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">

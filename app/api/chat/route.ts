@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
 
     // Fetch user profile from Supabase
     let learnerProfile: LearnerProfile | null = null;
+    let tutorName = "Parle";
 
     try {
       const supabase = await createClient();
@@ -82,12 +83,17 @@ export async function POST(request: NextRequest) {
       if (user) {
         const { data: profile } = await supabase
           .from("profiles")
-          .select("current_level, vocabulary, grammar, strengths, weaknesses, total_practice_minutes, streak_days, last_session_date")
+          .select("current_level, vocabulary, grammar, strengths, weaknesses, total_practice_minutes, streak_days, last_session_date, settings")
           .eq("id", user.id)
           .single();
 
         if (profile) {
           learnerProfile = convertToLearnerProfile(profile);
+          // Extract tutor name from settings
+          const settings = profile.settings as Record<string, unknown> | null;
+          if (settings?.tutor_name && typeof settings.tutor_name === "string") {
+            tutorName = settings.tutor_name;
+          }
         }
       }
     } catch (profileError) {
@@ -96,7 +102,7 @@ export async function POST(request: NextRequest) {
     }
 
     const claudeService = getClaudeService();
-    const response = await claudeService.chat(messages || [], userMessage, learnerProfile);
+    const response = await claudeService.chat(messages || [], userMessage, learnerProfile, tutorName);
 
     return NextResponse.json({
       content: response.content,

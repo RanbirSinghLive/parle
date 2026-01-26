@@ -90,7 +90,8 @@ export class AnthropicClaudeService implements ClaudeService {
   async chat(
     messages: ChatMessage[],
     userMessage: string,
-    profile?: LearnerProfile | null
+    profile?: LearnerProfile | null,
+    tutorName?: string
   ): Promise<TutorResponse> {
     const anthropicMessages = messages.map((msg) => ({
       role: msg.role as "user" | "assistant",
@@ -104,7 +105,7 @@ export class AnthropicClaudeService implements ClaudeService {
     });
 
     // Build personalized system prompt
-    const systemPrompt = buildSystemPrompt(profile);
+    const systemPrompt = buildSystemPrompt(profile, tutorName || "Parle");
 
     const response = await this.client.messages.create({
       model: "claude-sonnet-4-5-20250929",

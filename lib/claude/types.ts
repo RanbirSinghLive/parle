@@ -49,6 +49,7 @@ export interface ClaudeService {
   chat(
     messages: ChatMessage[],
     userMessage: string,
-    profile?: LearnerProfile | null
+    profile?: LearnerProfile | null,
+    tutorName?: string
   ): Promise<TutorResponse>;
 }
