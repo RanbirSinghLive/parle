@@ -14,6 +14,26 @@ import { TranscriptEntry } from "@/lib/session";
 let audioContextUnlocked = false;
 let silentAudioElement: HTMLAudioElement | null = null;
 
+// Detect iOS PWA mode
+function isIOSPWA(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true ||
+    window.matchMedia("(display-mode: standalone)").matches;
+
+  return isIOS && isStandalone;
+}
+
+// Detect if we're on iOS (PWA or browser)
+function isIOS(): boolean {
+  if (typeof window === "undefined") return false;
+
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
 function unlockAudioForIOS() {
   if (audioContextUnlocked) return;
 
@@ -150,6 +170,8 @@ function ConversationContent() {
   const addMessage = useConversationStore((state) => state.addMessage);
   const setProcessing = useConversationStore((state) => state.setProcessing);
   const setSpeaking = useConversationStore((state) => state.setSpeaking);
+  const microphoneError = useConversationStore((state) => state.microphoneError);
+  const setMicrophoneError = useConversationStore((state) => state.setMicrophoneError);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -221,18 +243,26 @@ function ConversationContent() {
   // This helps iOS PWAs maintain permission between sessions
   useEffect(() => {
     console.log("[Conversation] Requesting microphone permission on page load");
-    
+    console.log("[Conversation] Is iOS:", isIOS());
+    console.log("[Conversation] Is iOS PWA:", isIOSPWA());
+
     const requestMicrophonePermission = async () => {
       try {
         // Check if we already have a stream
         if (audioStreamRef.current) {
           console.log("[Conversation] Audio stream already exists, reusing");
+          setMicrophoneError(null);
           return;
         }
 
         // Check if getUserMedia is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           console.warn("[Conversation] getUserMedia not available in this browser");
+          if (isIOSPWA()) {
+            setMicrophoneError("Microphone not available in iOS PWA. Please open this app in Safari browser instead.");
+          } else {
+            setMicrophoneError("Microphone not available in this browser.");
+          }
           return;
         }
 
@@ -240,6 +270,7 @@ function ConversationContent() {
         console.log("[Conversation] Calling getUserMedia to request microphone permission");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioStreamRef.current = stream;
+        setMicrophoneError(null);
         console.log("[Conversation] Microphone permission granted, stream active:", stream.active);
         console.log("[Conversation] Stream tracks:", stream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
 
@@ -257,14 +288,24 @@ function ConversationContent() {
         });
       } catch (error) {
         console.error("[Conversation] Failed to request microphone permission:", error);
-        // Don't throw - user can still grant permission when they press the button
         if (error instanceof Error) {
           if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
             console.warn("[Conversation] Microphone permission denied by user");
+            if (isIOSPWA() || isIOS()) {
+              setMicrophoneError("Microphone access denied on iOS. Please check: 1) Allow microphone in iOS Settings > Safari > Microphone, 2) Enable MediaRecorder in Settings > Safari > Advanced > Experimental Features.");
+            } else {
+              setMicrophoneError("Microphone permission denied. Please allow microphone access in your browser settings.");
+            }
           } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
             console.warn("[Conversation] No microphone found");
+            setMicrophoneError("No microphone found on this device.");
           } else {
             console.error("[Conversation] Unexpected error requesting microphone:", error.message);
+            if (isIOSPWA() || isIOS()) {
+              setMicrophoneError("Microphone error on iOS. Try: Settings > Safari > Advanced > Experimental Features > Enable MediaRecorder.");
+            } else {
+              setMicrophoneError(`Microphone error: ${error.message}`);
+            }
           }
         }
       }
@@ -556,14 +597,25 @@ function ConversationContent() {
       if (error instanceof Error) {
         if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
           console.error("[Conversation] Microphone permission denied");
+          if (isIOS()) {
+            setMicrophoneError("Microphone denied. On iOS: Settings → Safari → Advanced → Experimental Features → Enable MediaRecorder");
+          } else {
+            setMicrophoneError("Microphone permission denied. Please allow access in browser settings.");
+          }
         } else if (error.name === "NotFoundError") {
           console.error("[Conversation] No microphone found");
+          setMicrophoneError("No microphone found on this device.");
         } else {
           console.error("[Conversation] Recording error:", error.message);
+          if (isIOS()) {
+            setMicrophoneError(`Recording failed on iOS: ${error.message}. Try enabling MediaRecorder in Safari settings.`);
+          } else {
+            setMicrophoneError(`Recording error: ${error.message}`);
+          }
         }
       }
     }
-  }, []);
+  }, [setMicrophoneError]);
 
   const handleRecordingStop = useCallback(async () => {
     const mediaRecorder = mediaRecorderRef.current;
@@ -775,7 +827,7 @@ function ConversationContent() {
           >
             {isEndingSession ? "Ending..." : "End"}
           </button>
-          <h1 className="text-lg font-semibold">Parle</h1>
+          <h1 className="text-lg font-semibold">Parlé</h1>
           <button
             onClick={handleLogout}
             className="text-sm text-primary-200 hover:text-white transition"
@@ -784,6 +836,29 @@ function ConversationContent() {
           </button>
         </div>
       </header>
+
+      {/* Microphone Error Banner */}
+      {microphoneError && (
+        <div className="flex-shrink-0 bg-amber-100 dark:bg-amber-900 border-b border-amber-200 dark:border-amber-800 px-4 py-3">
+          <div className="flex items-start gap-2">
+            <span className="text-amber-600 dark:text-amber-400 text-lg">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm text-amber-800 dark:text-amber-200">{microphoneError}</p>
+              {isIOS() && (
+                <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                  iOS tip: Go to Settings → Safari → Advanced → Experimental Features → Enable &quot;MediaRecorder&quot;
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setMicrophoneError(null)}
+              className="text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Transcript Area */}
       <Transcript />

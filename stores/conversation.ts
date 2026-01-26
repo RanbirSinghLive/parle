@@ -30,6 +30,7 @@ interface ConversationState {
   isRecording: boolean;
   isProcessing: boolean;
   isSpeaking: boolean;
+  microphoneError: string | null;
 
   // Session actions
   startSession: (sessionId: string) => void;
@@ -42,6 +43,7 @@ interface ConversationState {
   setRecording: (isRecording: boolean) => void;
   setProcessing: (isProcessing: boolean) => void;
   setSpeaking: (isSpeaking: boolean) => void;
+  setMicrophoneError: (error: string | null) => void;
   clearMessages: () => void;
 }
 
@@ -59,6 +61,7 @@ export const useConversationStore = create<ConversationState>((set) => ({
   isRecording: false,
   isProcessing: false,
   isSpeaking: false,
+  microphoneError: null,
 
   // Session actions
   startSession: (sessionId) =>
@@ -111,5 +114,6 @@ export const useConversationStore = create<ConversationState>((set) => ({
   setRecording: (isRecording) => set({ isRecording }),
   setProcessing: (isProcessing) => set({ isProcessing }),
   setSpeaking: (isSpeaking) => set({ isSpeaking }),
+  setMicrophoneError: (error) => set({ microphoneError: error }),
   clearMessages: () => set({ messages: [], allCorrections: [] }),
 }));
