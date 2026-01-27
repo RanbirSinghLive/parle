@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useRef, useEffect, useMemo } from "react";
+import { Suspense, useCallback, useRef, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Transcript } from "@/components/Transcript";
 import { PushToTalkButton } from "@/components/PushToTalkButton";
@@ -602,6 +602,10 @@ function ConversationContent() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  // DOM-based audio element for iOS - rendered in JSX, more reliable than dynamically created
+  const domAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const pendingAudioUrlRef = useRef<string | null>(null);
   const audioMimeTypeRef = useRef<string>(""); // Store the actual MIME type being used
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -610,6 +614,128 @@ function ConversationContent() {
   useEffect(() => {
     initVoices();
   }, []);
+
+  // Function to unlock iOS audio using DOM element - must be called during user gesture
+  const unlockDOMAudio = useCallback(() => {
+    const audio = domAudioRef.current;
+    if (!audio || audioUnlocked) {
+      console.log("[DOM Audio] Already unlocked or no element:", { audioUnlocked, hasElement: !!audio });
+      return;
+    }
+
+    console.log("[DOM Audio] Attempting to unlock audio element...");
+
+    // Play and immediately pause to unlock
+    audio.muted = true;
+    audio.play()
+      .then(() => {
+        console.log("[DOM Audio] Successfully played muted audio - UNLOCKED!");
+        audio.pause();
+        audio.muted = false;
+        audio.currentTime = 0;
+        setAudioUnlocked(true);
+        // Also update module-level flag
+        preWarmedElementPrimed = true;
+      })
+      .catch((e) => {
+        console.log("[DOM Audio] Muted play failed:", e);
+        // Still try to mark as ready - the element exists in DOM which might be enough
+      });
+  }, [audioUnlocked]);
+
+  // Play audio using the DOM audio element
+  const playWithDOMAudio = useCallback((audioBuffer: ArrayBuffer): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const audio = domAudioRef.current;
+      if (!audio) {
+        console.error("[DOM Audio] No DOM audio element available");
+        reject(new Error("No DOM audio element"));
+        return;
+      }
+
+      console.log("[DOM Audio] Playing audio, buffer size:", audioBuffer.byteLength);
+      console.log("[DOM Audio] Audio unlocked:", audioUnlocked);
+
+      // Clean up previous URL
+      if (pendingAudioUrlRef.current) {
+        URL.revokeObjectURL(pendingAudioUrlRef.current);
+      }
+
+      // Create blob URL
+      const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      pendingAudioUrlRef.current = url;
+
+      let resolved = false;
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          if (pendingAudioUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            pendingAudioUrlRef.current = null;
+          }
+        }
+      };
+
+      const safetyTimeout = setTimeout(() => {
+        console.warn("[DOM Audio] Safety timeout (60s)");
+        cleanup();
+        resolve();
+      }, 60000);
+
+      audio.onended = () => {
+        console.log("[DOM Audio] Playback ended successfully");
+        clearTimeout(safetyTimeout);
+        cleanup();
+        resolve();
+      };
+
+      audio.onerror = () => {
+        console.error("[DOM Audio] Error:", audio.error);
+        clearTimeout(safetyTimeout);
+        cleanup();
+        reject(audio.error);
+      };
+
+      // Set source and play
+      audio.src = url;
+      audio.load();
+
+      // Try to play after a brief delay to ensure loading
+      const attemptPlay = async (attempt: number = 1) => {
+        if (resolved) return;
+        console.log("[DOM Audio] Play attempt", attempt, "readyState:", audio.readyState);
+
+        try {
+          await audio.play();
+          console.log("[DOM Audio] Play started successfully");
+        } catch (e) {
+          console.error("[DOM Audio] Play attempt", attempt, "failed:", e);
+          if (attempt < 3) {
+            setTimeout(() => attemptPlay(attempt + 1), 500);
+          } else {
+            clearTimeout(safetyTimeout);
+            cleanup();
+            reject(e);
+          }
+        }
+      };
+
+      audio.oncanplaythrough = () => {
+        console.log("[DOM Audio] canplaythrough fired");
+        if (!resolved && audio.paused) {
+          attemptPlay();
+        }
+      };
+
+      // Fallback if events don't fire
+      setTimeout(() => {
+        if (!resolved && audio.paused) {
+          attemptPlay();
+        }
+      }, 500);
+    });
+  }, [audioUnlocked]);
 
   // Fix iOS viewport height issue - ensure button is always visible
   useEffect(() => {
@@ -925,7 +1051,9 @@ function ConversationContent() {
 
   const handleRecordingStart = useCallback(async () => {
     // Unlock audio for iOS - must happen during user gesture
-    await unlockAudioForIOS();
+    // Try both methods: module-level pre-warmed element AND DOM-based element
+    unlockDOMAudio(); // Unlock DOM element (synchronous start, async completion)
+    await unlockAudioForIOS(); // Also try the module-level approach
 
     try {
       console.log("[Conversation] Starting recording...");
@@ -1154,13 +1282,28 @@ function ConversationContent() {
               throw new Error("Empty audio buffer");
             }
 
-            // Ensure audio is unlocked before playing
-            await unlockAudioForIOS();
+            // Don't call unlockAudioForIOS here - it was already called during button press
+            // Calling it again outside gesture context can break things
 
             setSpeaking(true);
             try {
               console.log("[Conversation] Starting ElevenLabs audio playback...");
-              await playAudioWithRetry(audioBuffer);
+              console.log("[Conversation] audioUnlocked:", audioUnlocked, "domAudioRef:", !!domAudioRef.current);
+
+              // On iOS, try the DOM-based audio element first (most reliable)
+              if (isIOS() && domAudioRef.current) {
+                console.log("[Conversation] iOS detected - trying DOM audio element first");
+                try {
+                  await playWithDOMAudio(audioBuffer);
+                  console.log("[Conversation] DOM audio playback completed");
+                } catch (domError) {
+                  console.error("[Conversation] DOM audio failed:", domError);
+                  console.log("[Conversation] Falling back to other methods...");
+                  await playAudioWithRetry(audioBuffer);
+                }
+              } else {
+                await playAudioWithRetry(audioBuffer);
+              }
               console.log("[Conversation] Audio playback completed successfully");
             } catch (playError) {
               console.error("[Conversation] Audio playback failed:", playError);
@@ -1180,9 +1323,7 @@ function ConversationContent() {
             const responseData = await ttsResponse.json();
             console.log("[Conversation] TTS API response:", responseData);
 
-            // Ensure audio is unlocked before speaking
-            await unlockAudioForIOS();
-
+            // Don't call unlockAudioForIOS here - was already called during button press
             setSpeaking(true);
             try {
               console.log("[Conversation] Starting browser TTS...");
@@ -1190,7 +1331,6 @@ function ConversationContent() {
               console.log("[Conversation] Browser TTS completed");
             } catch (browserTTSError) {
               console.error("[Conversation] Browser TTS error:", browserTTSError);
-              // Log a visible warning for debugging
               console.warn("[Conversation] Audio failed to play - check browser TTS support");
             }
             setSpeaking(false);
@@ -1198,8 +1338,7 @@ function ConversationContent() {
         } catch (ttsError) {
           console.error("[Conversation] TTS error:", ttsError);
           console.error("[Conversation] TTS error details:", ttsError instanceof Error ? ttsError.message : String(ttsError));
-          // Fallback to browser TTS
-          await unlockAudioForIOS();
+          // Fallback to browser TTS - don't call unlockAudioForIOS, already called
           setSpeaking(true);
           try {
             await speakText(tutorResponse, "fr-FR");
@@ -1241,9 +1380,11 @@ function ConversationContent() {
   }
 
   return (
-    <div 
-      className="flex flex-col bg-slate-50 dark:bg-slate-900" 
+    <div
+      className="flex flex-col bg-slate-50 dark:bg-slate-900"
       data-conversation-container
+      onTouchStart={unlockDOMAudio} // Unlock audio on first touch (iOS)
+      onClick={unlockDOMAudio} // Also try on click
       style={{
         height: 'calc(var(--vh, 1vh) * 100)',
         minHeight: '100dvh',
@@ -1252,6 +1393,15 @@ function ConversationContent() {
         overflow: 'hidden'
       }}
     >
+      {/* Hidden audio element for iOS - must be in DOM for reliable playback */}
+      <audio
+        ref={domAudioRef}
+        playsInline
+        webkit-playsinline="true"
+        preload="auto"
+        style={{ display: 'none' }}
+        src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ=="
+      />
       {/* Header */}
       <header className="flex-shrink-0 bg-primary-800 text-white px-4 py-2 shadow-md" style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
         <div className="flex items-center justify-between">
