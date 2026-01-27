@@ -13,6 +13,7 @@ import { TranscriptEntry } from "@/lib/session";
 // iOS audio unlock - create a silent audio context to enable playback after async operations
 let audioContextUnlocked = false;
 let silentAudioElement: HTMLAudioElement | null = null;
+let sharedAudioContext: AudioContext | null = null;
 
 // Detect iOS PWA mode
 function isIOSPWA(): boolean {
@@ -35,8 +36,8 @@ function isIOS(): boolean {
 }
 
 async function unlockAudioForIOS(): Promise<boolean> {
-  if (audioContextUnlocked) {
-    console.log("[iOS Audio] Audio already unlocked");
+  if (audioContextUnlocked && sharedAudioContext?.state === "running") {
+    console.log("[iOS Audio] Audio already unlocked, context state:", sharedAudioContext.state);
     return true;
   }
 
@@ -57,19 +58,32 @@ async function unlockAudioForIOS(): Promise<boolean> {
     console.log("[iOS Audio] Silent audio play failed:", e instanceof Error ? e.message : e);
   }
 
-  // Method 2: Create an AudioContext
+  // Method 2: Create/resume a shared AudioContext and keep it for playback
   try {
-    const AudioContext = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
-    if (AudioContext) {
-      const ctx = new AudioContext();
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-        console.log("[iOS Audio] AudioContext resumed");
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
+    if (AudioContextClass) {
+      // Reuse or create the shared context
+      if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+        sharedAudioContext = new AudioContextClass();
+        console.log("[iOS Audio] Created new shared AudioContext");
+      }
+
+      if (sharedAudioContext.state === "suspended") {
+        await sharedAudioContext.resume();
+        console.log("[iOS Audio] Shared AudioContext resumed, state:", sharedAudioContext.state);
         unlocked = true;
       } else {
-        console.log("[iOS Audio] AudioContext already running, state:", ctx.state);
+        console.log("[iOS Audio] Shared AudioContext already running, state:", sharedAudioContext.state);
         unlocked = true;
       }
+
+      // Play a tiny silent buffer to fully activate the context on iOS
+      const silentBuffer = sharedAudioContext.createBuffer(1, 1, 22050);
+      const source = sharedAudioContext.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(sharedAudioContext.destination);
+      source.start(0);
+      console.log("[iOS Audio] Played silent buffer through AudioContext");
     }
   } catch (e) {
     console.log("[iOS Audio] AudioContext method failed:", e);
@@ -84,6 +98,68 @@ async function unlockAudioForIOS(): Promise<boolean> {
 async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
   console.log("[Audio Playback] Starting playback, buffer size:", audioBuffer.byteLength);
 
+  // On iOS, prefer Web Audio API with shared AudioContext for better compatibility
+  if (isIOS() && sharedAudioContext && sharedAudioContext.state === "running") {
+    console.log("[Audio Playback] Using Web Audio API for iOS playback");
+    return playWithWebAudioAPI(audioBuffer);
+  }
+
+  // Fallback to HTML Audio element for non-iOS or if AudioContext not ready
+  console.log("[Audio Playback] Using HTML Audio element for playback");
+  return playWithHTMLAudio(audioBuffer);
+}
+
+// Play audio using Web Audio API (better for iOS)
+async function playWithWebAudioAPI(audioBuffer: ArrayBuffer): Promise<void> {
+  return new Promise(async (resolve) => {
+    if (!sharedAudioContext) {
+      console.error("[Audio Playback] No shared AudioContext available");
+      resolve();
+      return;
+    }
+
+    // Ensure context is running
+    if (sharedAudioContext.state === "suspended") {
+      console.log("[Audio Playback] Resuming suspended AudioContext");
+      await sharedAudioContext.resume();
+    }
+
+    try {
+      // Decode the audio data
+      console.log("[Audio Playback] Decoding audio buffer...");
+      const decodedAudio = await sharedAudioContext.decodeAudioData(audioBuffer.slice(0));
+      console.log("[Audio Playback] Audio decoded, duration:", decodedAudio.duration, "seconds");
+
+      // Create a buffer source and play
+      const source = sharedAudioContext.createBufferSource();
+      source.buffer = decodedAudio;
+      source.connect(sharedAudioContext.destination);
+
+      // Safety timeout
+      const safetyTimeout = setTimeout(() => {
+        console.warn("[Audio Playback] Web Audio safety timeout reached");
+        resolve();
+      }, 60000);
+
+      source.onended = () => {
+        console.log("[Audio Playback] Web Audio playback ended successfully");
+        clearTimeout(safetyTimeout);
+        resolve();
+      };
+
+      source.start(0);
+      console.log("[Audio Playback] Web Audio playback started");
+    } catch (e) {
+      console.error("[Audio Playback] Web Audio API error:", e);
+      // Fallback to HTML Audio
+      console.log("[Audio Playback] Falling back to HTML Audio element");
+      resolve(playWithHTMLAudio(audioBuffer));
+    }
+  });
+}
+
+// Play audio using HTML Audio element (original method)
+async function playWithHTMLAudio(audioBuffer: ArrayBuffer): Promise<void> {
   const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
   const audioUrl = URL.createObjectURL(blob);
   const audio = new Audio();
