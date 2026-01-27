@@ -17,6 +17,8 @@ let sharedAudioContext: AudioContext | null = null;
 // Pre-warmed audio element for iOS - created during user gesture, reused for playback
 let preWarmedAudioElement: HTMLAudioElement | null = null;
 let pendingAudioResolve: (() => void) | null = null;
+// Track if the pre-warmed element was successfully primed during a user gesture
+let preWarmedElementPrimed = false;
 
 // Detect iOS PWA mode
 function isIOSPWA(): boolean {
@@ -40,16 +42,22 @@ function isIOS(): boolean {
 
 async function unlockAudioForIOS(): Promise<boolean> {
   console.log("[iOS Audio] unlockAudioForIOS called");
-  console.log("[iOS Audio] Current state - unlocked:", audioContextUnlocked, "context:", sharedAudioContext?.state);
+  console.log("[iOS Audio] Current state - primed:", preWarmedElementPrimed, "context:", sharedAudioContext?.state);
 
-  // Always try to prime/re-prime on iOS during user gesture
   const onIOS = isIOS();
   console.log("[iOS Audio] Is iOS:", onIOS);
 
+  // CRITICAL: If the pre-warmed element was already successfully primed during a user gesture,
+  // DO NOT try to play silent audio again. Playing outside a gesture will FAIL and may taint the element.
+  if (preWarmedElementPrimed && preWarmedAudioElement) {
+    console.log("[iOS Audio] Pre-warmed element already primed, skipping silent audio play");
+    return true;
+  }
+
   let unlocked = false;
 
-  // Method 1: Create/reuse a pre-warmed Audio element (critical for iOS)
-  // This element is created during user gesture and reused for later playback
+  // Method 1: Create and prime a pre-warmed Audio element (critical for iOS)
+  // This MUST happen during a user gesture (button press/release)
   try {
     if (!preWarmedAudioElement) {
       console.log("[iOS Audio] Creating new pre-warmed Audio element");
@@ -62,20 +70,23 @@ async function unlockAudioForIOS(): Promise<boolean> {
       preWarmedAudioElement.setAttribute("webkit-playsinline", "true");
     }
 
-    // Play silent audio to "unlock" this element
-    // Data URI for a tiny silent MP3
-    preWarmedAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
-    preWarmedAudioElement.load();
+    // Only try to play silent audio if not already primed
+    if (!preWarmedElementPrimed) {
+      // Data URI for a tiny silent MP3
+      preWarmedAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
+      preWarmedAudioElement.load();
 
-    console.log("[iOS Audio] Attempting to play silent audio on pre-warmed element...");
-    await preWarmedAudioElement.play();
-    console.log("[iOS Audio] Pre-warmed element played silent audio successfully");
-    preWarmedAudioElement.pause();
-    preWarmedAudioElement.currentTime = 0;
-    unlocked = true;
+      console.log("[iOS Audio] Attempting to play silent audio on pre-warmed element...");
+      await preWarmedAudioElement.play();
+      console.log("[iOS Audio] Pre-warmed element played silent audio successfully - PRIMED!");
+      preWarmedAudioElement.pause();
+      preWarmedAudioElement.currentTime = 0;
+      preWarmedElementPrimed = true; // Mark as successfully primed
+      unlocked = true;
+    }
   } catch (e) {
     console.log("[iOS Audio] Pre-warmed element play failed:", e instanceof Error ? e.message : e);
-    // Don't give up - the element might still work for future playback
+    // If we're not in a user gesture, this is expected - don't mark as failed
   }
 
   // Method 2: Also create/resume a shared AudioContext for Web Audio API
@@ -89,13 +100,18 @@ async function unlockAudioForIOS(): Promise<boolean> {
       }
 
       if (sharedAudioContext.state === "suspended") {
-        await sharedAudioContext.resume();
-        console.log("[iOS Audio] Shared AudioContext resumed, state:", sharedAudioContext.state);
+        try {
+          await sharedAudioContext.resume();
+          console.log("[iOS Audio] Shared AudioContext resumed, state:", sharedAudioContext.state);
+        } catch (resumeErr) {
+          // Resume outside user gesture will fail on iOS - this is expected
+          console.log("[iOS Audio] AudioContext resume failed (expected outside gesture):", resumeErr);
+        }
       } else {
         console.log("[iOS Audio] Shared AudioContext state:", sharedAudioContext.state);
       }
 
-      // Play a tiny silent buffer to fully activate the context
+      // Only play silent buffer if context is running (will fail outside gesture)
       if (sharedAudioContext.state === "running") {
         const silentBuffer = sharedAudioContext.createBuffer(1, 1, 22050);
         const source = sharedAudioContext.createBufferSource();
@@ -110,9 +126,9 @@ async function unlockAudioForIOS(): Promise<boolean> {
     console.log("[iOS Audio] AudioContext method failed:", e);
   }
 
-  audioContextUnlocked = unlocked;
-  console.log("[iOS Audio] Unlock complete. Result:", unlocked, "preWarmedElement exists:", !!preWarmedAudioElement);
-  return unlocked;
+  audioContextUnlocked = unlocked || preWarmedElementPrimed;
+  console.log("[iOS Audio] Unlock complete. primed:", preWarmedElementPrimed, "unlocked:", unlocked);
+  return audioContextUnlocked;
 }
 
 // Helper to play audio with iOS-friendly retry logic
@@ -178,19 +194,26 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
 // Play audio using the pre-warmed Audio element (best for iOS)
 async function playWithPreWarmedElement(audioBuffer: ArrayBuffer): Promise<void> {
   console.log("[PreWarmed Audio] Starting playback with pre-warmed element");
+  console.log("[PreWarmed Audio] Element primed:", preWarmedElementPrimed);
 
   if (!preWarmedAudioElement) {
     throw new Error("No pre-warmed audio element available");
   }
 
+  if (!preWarmedElementPrimed) {
+    console.warn("[PreWarmed Audio] Element was not primed during user gesture, playback may fail");
+  }
+
   // Create blob URL for the audio data
   const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
   const audioUrl = URL.createObjectURL(blob);
-  console.log("[PreWarmed Audio] Created blob URL");
+  console.log("[PreWarmed Audio] Created blob URL, size:", blob.size);
 
   return new Promise((resolve, reject) => {
     const audio = preWarmedAudioElement!;
     let resolved = false;
+    let playAttempts = 0;
+    const maxAttempts = 3;
 
     const cleanup = () => {
       if (!resolved) {
@@ -199,6 +222,31 @@ async function playWithPreWarmedElement(audioBuffer: ArrayBuffer): Promise<void>
         audio.onended = null;
         audio.onerror = null;
         audio.oncanplaythrough = null;
+        audio.onloadeddata = null;
+      }
+    };
+
+    const attemptPlay = async () => {
+      if (resolved) return;
+      playAttempts++;
+      console.log("[PreWarmed Audio] Play attempt", playAttempts, "of", maxAttempts);
+      console.log("[PreWarmed Audio]   readyState:", audio.readyState, "paused:", audio.paused);
+
+      try {
+        await audio.play();
+        console.log("[PreWarmed Audio] Play started successfully on attempt", playAttempts);
+      } catch (playError) {
+        console.error("[PreWarmed Audio] Play attempt", playAttempts, "failed:", playError);
+
+        if (playAttempts < maxAttempts) {
+          // Retry with delay
+          setTimeout(attemptPlay, 300 * playAttempts);
+        } else {
+          console.error("[PreWarmed Audio] All play attempts failed");
+          clearTimeout(safetyTimeout);
+          cleanup();
+          reject(playError);
+        }
       }
     };
 
@@ -217,41 +265,48 @@ async function playWithPreWarmedElement(audioBuffer: ArrayBuffer): Promise<void>
     };
 
     audio.onerror = (e) => {
-      console.error("[PreWarmed Audio] Error:", e, audio.error);
-      clearTimeout(safetyTimeout);
-      cleanup();
-      reject(new Error("Pre-warmed audio playback failed"));
+      console.error("[PreWarmed Audio] Error event:", e);
+      if (audio.error) {
+        console.error("[PreWarmed Audio] Error code:", audio.error.code, "message:", audio.error.message);
+      }
+      // Don't reject immediately - let retry logic handle it
     };
 
-    // Set the new source and play
+    // Set the new source
+    console.log("[PreWarmed Audio] Setting new src and loading...");
     audio.src = audioUrl;
     audio.load();
 
-    audio.oncanplaythrough = async () => {
-      if (resolved) return;
-      console.log("[PreWarmed Audio] canplaythrough fired, attempting play...");
-      try {
-        await audio.play();
-        console.log("[PreWarmed Audio] Play started successfully");
-      } catch (playError) {
-        console.error("[PreWarmed Audio] Play failed:", playError);
-        clearTimeout(safetyTimeout);
-        cleanup();
-        reject(playError);
-      }
+    audio.onloadeddata = () => {
+      console.log("[PreWarmed Audio] loadeddata fired, readyState:", audio.readyState);
     };
 
-    // Also try playing after a short delay in case canplaythrough doesn't fire
-    setTimeout(async () => {
+    audio.oncanplaythrough = () => {
       if (resolved || !audio.paused) return;
-      console.log("[PreWarmed Audio] Fallback: attempting play after 500ms delay");
-      try {
-        await audio.play();
-        console.log("[PreWarmed Audio] Fallback play started");
-      } catch (e) {
-        console.warn("[PreWarmed Audio] Fallback play failed:", e);
+      console.log("[PreWarmed Audio] canplaythrough fired, readyState:", audio.readyState);
+      attemptPlay();
+    };
+
+    // Fallback: try playing after delays if events don't fire
+    setTimeout(() => {
+      if (resolved || !audio.paused) return;
+      if (audio.readyState >= 2) {
+        console.log("[PreWarmed Audio] Fallback at 300ms, readyState:", audio.readyState);
+        attemptPlay();
       }
-    }, 500);
+    }, 300);
+
+    setTimeout(() => {
+      if (resolved || !audio.paused) return;
+      console.log("[PreWarmed Audio] Fallback at 1s, readyState:", audio.readyState);
+      attemptPlay();
+    }, 1000);
+
+    setTimeout(() => {
+      if (resolved || !audio.paused) return;
+      console.log("[PreWarmed Audio] Last resort at 3s, readyState:", audio.readyState);
+      attemptPlay();
+    }, 3000);
   });
 }
 
