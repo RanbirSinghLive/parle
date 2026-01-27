@@ -97,49 +97,120 @@ async function unlockAudioForIOS(): Promise<boolean> {
 // Helper to play audio with iOS-friendly retry logic
 async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
   console.log("[Audio Playback] Starting playback, buffer size:", audioBuffer.byteLength);
+  console.log("[Audio Playback] Is iOS:", isIOS());
+  console.log("[Audio Playback] SharedAudioContext exists:", !!sharedAudioContext);
+  console.log("[Audio Playback] SharedAudioContext state:", sharedAudioContext?.state);
 
-  // On iOS, prefer Web Audio API with shared AudioContext for better compatibility
-  if (isIOS() && sharedAudioContext && sharedAudioContext.state === "running") {
-    console.log("[Audio Playback] Using Web Audio API for iOS playback");
-    return playWithWebAudioAPI(audioBuffer);
+  // Validate buffer
+  if (!audioBuffer || audioBuffer.byteLength === 0) {
+    console.error("[Audio Playback] Invalid or empty audio buffer");
+    throw new Error("Invalid audio buffer");
   }
 
-  // Fallback to HTML Audio element for non-iOS or if AudioContext not ready
-  console.log("[Audio Playback] Using HTML Audio element for playback");
+  // On iOS, try to use Web Audio API first, but fall back gracefully
+  if (isIOS()) {
+    console.log("[Audio Playback] iOS detected, attempting Web Audio API...");
+
+    // Try to ensure AudioContext is ready
+    if (sharedAudioContext) {
+      if (sharedAudioContext.state === "suspended") {
+        console.log("[Audio Playback] Attempting to resume suspended AudioContext for iOS...");
+        try {
+          await sharedAudioContext.resume();
+          console.log("[Audio Playback] AudioContext resumed, state:", sharedAudioContext.state);
+        } catch (e) {
+          console.warn("[Audio Playback] Failed to resume AudioContext:", e);
+        }
+      }
+
+      if (sharedAudioContext.state === "running") {
+        console.log("[Audio Playback] Using Web Audio API for iOS playback");
+        try {
+          return await playWithWebAudioAPI(audioBuffer);
+        } catch (webAudioError) {
+          console.error("[Audio Playback] Web Audio API failed on iOS:", webAudioError);
+          console.log("[Audio Playback] Falling back to HTML Audio for iOS");
+        }
+      } else {
+        console.warn("[Audio Playback] AudioContext not running on iOS, state:", sharedAudioContext.state);
+      }
+    } else {
+      console.warn("[Audio Playback] No shared AudioContext available on iOS");
+    }
+
+    // Fall through to HTML Audio as fallback for iOS
+    console.log("[Audio Playback] Using HTML Audio element as fallback for iOS");
+    return playWithHTMLAudio(audioBuffer);
+  }
+
+  // Non-iOS: Use HTML Audio element
+  console.log("[Audio Playback] Using HTML Audio element for playback (non-iOS)");
   return playWithHTMLAudio(audioBuffer);
 }
 
 // Play audio using Web Audio API (better for iOS)
 async function playWithWebAudioAPI(audioBuffer: ArrayBuffer): Promise<void> {
-  return new Promise(async (resolve) => {
-    if (!sharedAudioContext) {
-      console.error("[Audio Playback] No shared AudioContext available");
-      resolve();
-      return;
-    }
+  console.log("[Audio Playback] playWithWebAudioAPI called, buffer size:", audioBuffer.byteLength);
 
-    // Ensure context is running
-    if (sharedAudioContext.state === "suspended") {
-      console.log("[Audio Playback] Resuming suspended AudioContext");
-      await sharedAudioContext.resume();
-    }
+  if (!sharedAudioContext) {
+    console.error("[Audio Playback] No shared AudioContext available, falling back to HTML Audio");
+    return playWithHTMLAudio(audioBuffer);
+  }
 
+  console.log("[Audio Playback] AudioContext state:", sharedAudioContext.state);
+
+  // Ensure context is running - critical for iOS
+  if (sharedAudioContext.state === "suspended") {
+    console.log("[Audio Playback] Resuming suspended AudioContext...");
     try {
-      // Decode the audio data
+      await sharedAudioContext.resume();
+      console.log("[Audio Playback] AudioContext resumed, new state:", sharedAudioContext.state);
+    } catch (resumeError) {
+      console.error("[Audio Playback] Failed to resume AudioContext:", resumeError);
+      return playWithHTMLAudio(audioBuffer);
+    }
+  }
+
+  // If still not running after resume attempt, fall back
+  if (sharedAudioContext.state !== "running") {
+    console.warn("[Audio Playback] AudioContext still not running after resume, state:", sharedAudioContext.state);
+    return playWithHTMLAudio(audioBuffer);
+  }
+
+  return new Promise(async (resolve) => {
+    try {
+      // Decode the audio data - make a copy to avoid issues with detached buffers
       console.log("[Audio Playback] Decoding audio buffer...");
-      const decodedAudio = await sharedAudioContext.decodeAudioData(audioBuffer.slice(0));
-      console.log("[Audio Playback] Audio decoded, duration:", decodedAudio.duration, "seconds");
+      const bufferCopy = audioBuffer.slice(0);
+
+      let decodedAudio: AudioBuffer;
+      try {
+        decodedAudio = await sharedAudioContext!.decodeAudioData(bufferCopy);
+      } catch (decodeError) {
+        console.error("[Audio Playback] Failed to decode audio:", decodeError);
+        // iOS Chrome sometimes fails to decode MP3, fall back to HTML Audio
+        console.log("[Audio Playback] Falling back to HTML Audio due to decode failure");
+        return resolve(await playWithHTMLAudio(audioBuffer));
+      }
+
+      console.log("[Audio Playback] Audio decoded successfully, duration:", decodedAudio.duration, "seconds");
+
+      if (decodedAudio.duration === 0) {
+        console.warn("[Audio Playback] Decoded audio has zero duration, falling back to HTML Audio");
+        return resolve(await playWithHTMLAudio(audioBuffer));
+      }
 
       // Create a buffer source and play
-      const source = sharedAudioContext.createBufferSource();
+      const source = sharedAudioContext!.createBufferSource();
       source.buffer = decodedAudio;
-      source.connect(sharedAudioContext.destination);
+      source.connect(sharedAudioContext!.destination);
 
-      // Safety timeout
+      // Safety timeout based on audio duration plus buffer
+      const timeoutMs = Math.max(60000, (decodedAudio.duration * 1000) + 5000);
       const safetyTimeout = setTimeout(() => {
-        console.warn("[Audio Playback] Web Audio safety timeout reached");
+        console.warn("[Audio Playback] Web Audio safety timeout reached after", timeoutMs, "ms");
         resolve();
-      }, 60000);
+      }, timeoutMs);
 
       source.onended = () => {
         console.log("[Audio Playback] Web Audio playback ended successfully");
@@ -148,34 +219,48 @@ async function playWithWebAudioAPI(audioBuffer: ArrayBuffer): Promise<void> {
       };
 
       source.start(0);
-      console.log("[Audio Playback] Web Audio playback started");
+      console.log("[Audio Playback] Web Audio playback started successfully");
     } catch (e) {
       console.error("[Audio Playback] Web Audio API error:", e);
-      // Fallback to HTML Audio
+      // Fallback to HTML Audio - properly await it
       console.log("[Audio Playback] Falling back to HTML Audio element");
-      resolve(playWithHTMLAudio(audioBuffer));
+      try {
+        await playWithHTMLAudio(audioBuffer);
+      } catch (htmlError) {
+        console.error("[Audio Playback] HTML Audio fallback also failed:", htmlError);
+      }
+      resolve();
     }
   });
 }
 
 // Play audio using HTML Audio element (original method)
 async function playWithHTMLAudio(audioBuffer: ArrayBuffer): Promise<void> {
+  console.log("[HTML Audio] Starting HTML Audio playback, buffer size:", audioBuffer.byteLength);
+
   const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
   const audioUrl = URL.createObjectURL(blob);
+  console.log("[HTML Audio] Created blob URL:", audioUrl.substring(0, 50) + "...");
+
   const audio = new Audio();
 
-  // Set audio properties for better compatibility
+  // Set audio properties for better iOS compatibility
   audio.preload = "auto";
   audio.volume = 1.0;
+  // iOS Chrome may need these attributes
+  (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+  audio.setAttribute("playsinline", "true");
+  audio.setAttribute("webkit-playsinline", "true");
 
   // iOS needs load() to be called explicitly
   audio.src = audioUrl;
   audio.load();
+  console.log("[HTML Audio] Audio element created and loading, readyState:", audio.readyState);
 
   return new Promise((resolve) => {
     let resolved = false;
     let playAttempts = 0;
-    const maxPlayAttempts = 3;
+    const maxPlayAttempts = 5; // Increased retry attempts for iOS
 
     const cleanup = () => {
       if (!resolved) {
@@ -186,21 +271,37 @@ async function playWithHTMLAudio(audioBuffer: ArrayBuffer): Promise<void> {
 
     const attemptPlay = async () => {
       playAttempts++;
-      console.log("[Audio Playback] Play attempt", playAttempts, "of", maxPlayAttempts, "readyState:", audio.readyState);
+      console.log("[HTML Audio] Play attempt", playAttempts, "of", maxPlayAttempts);
+      console.log("[HTML Audio]   readyState:", audio.readyState);
+      console.log("[HTML Audio]   networkState:", audio.networkState);
+      console.log("[HTML Audio]   paused:", audio.paused);
+      console.log("[HTML Audio]   error:", audio.error);
 
       try {
-        await audio.play();
-        console.log("[Audio Playback] Play succeeded on attempt", playAttempts);
+        // On iOS, ensure the audio is loaded before playing
+        if (audio.readyState < 2 && playAttempts === 1) {
+          console.log("[HTML Audio] Audio not ready, waiting for loadeddata event...");
+          // Give it a moment to load
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          await playPromise;
+        }
+        console.log("[HTML Audio] Play succeeded on attempt", playAttempts);
       } catch (e) {
-        console.error("[Audio Playback] Play attempt", playAttempts, "failed:", e);
+        const error = e as Error;
+        console.error("[HTML Audio] Play attempt", playAttempts, "failed:", error.name, error.message);
 
         if (playAttempts < maxPlayAttempts) {
-          // Wait longer between retries
-          const retryDelay = playAttempts * 500;
-          console.log("[Audio Playback] Retrying in", retryDelay, "ms");
+          // Exponential backoff with longer delays for iOS
+          const retryDelay = Math.min(playAttempts * 500, 2000);
+          console.log("[HTML Audio] Retrying in", retryDelay, "ms");
           setTimeout(attemptPlay, retryDelay);
         } else {
-          console.error("[Audio Playback] All play attempts failed");
+          console.error("[HTML Audio] All", maxPlayAttempts, "play attempts failed");
+          console.error("[HTML Audio] Final audio state - readyState:", audio.readyState, "networkState:", audio.networkState, "error:", audio.error);
           cleanup();
           resolve();
         }
@@ -208,24 +309,27 @@ async function playWithHTMLAudio(audioBuffer: ArrayBuffer): Promise<void> {
     };
 
     // Safety timeout - resolve after max duration to prevent hanging
-    // Most TTS responses are under 30 seconds
     const safetyTimeout = setTimeout(() => {
       if (!resolved) {
-        console.warn("[Audio Playback] Safety timeout reached, resolving");
+        console.warn("[HTML Audio] Safety timeout reached (60s), resolving");
         cleanup();
         resolve();
       }
-    }, 60000); // 60 second max
+    }, 60000);
 
     audio.onended = () => {
-      console.log("[Audio Playback] Audio ended successfully");
+      console.log("[HTML Audio] Audio ended successfully");
       clearTimeout(safetyTimeout);
       cleanup();
       resolve();
     };
 
     audio.onerror = (e) => {
-      console.error("[Audio Playback] Audio error:", e, audio.error);
+      console.error("[HTML Audio] Audio error event:", e);
+      console.error("[HTML Audio] Audio.error object:", audio.error);
+      if (audio.error) {
+        console.error("[HTML Audio] Error code:", audio.error.code, "message:", audio.error.message);
+      }
       clearTimeout(safetyTimeout);
       cleanup();
       // Resolve instead of reject to prevent cascading errors
@@ -234,39 +338,54 @@ async function playWithHTMLAudio(audioBuffer: ArrayBuffer): Promise<void> {
 
     // Listen for various ready events
     audio.oncanplaythrough = () => {
-      if (!resolved && audio.paused) {
-        console.log("[Audio Playback] Can play through event fired, starting playback");
+      console.log("[HTML Audio] canplaythrough event fired, readyState:", audio.readyState, "paused:", audio.paused);
+      if (!resolved && audio.paused && playAttempts === 0) {
+        console.log("[HTML Audio] Starting playback from canplaythrough event");
         attemptPlay();
       }
     };
 
     audio.onloadeddata = () => {
-      console.log("[Audio Playback] Loaded data event fired, readyState:", audio.readyState);
+      console.log("[HTML Audio] loadeddata event fired, readyState:", audio.readyState);
       // If canplaythrough hasn't fired yet, try playing when data is loaded
-      if (!resolved && audio.paused && audio.readyState >= 2) {
-        console.log("[Audio Playback] Data loaded, attempting play");
+      if (!resolved && audio.paused && audio.readyState >= 2 && playAttempts === 0) {
+        console.log("[HTML Audio] Data loaded, attempting play");
         attemptPlay();
       }
     };
 
+    audio.onloadstart = () => {
+      console.log("[HTML Audio] loadstart event fired");
+    };
+
+    audio.onprogress = () => {
+      console.log("[HTML Audio] progress event fired, buffered:", audio.buffered.length > 0 ? audio.buffered.end(0) : 0);
+    };
+
+    audio.onstalled = () => {
+      console.warn("[HTML Audio] stalled event fired - media data not available");
+    };
+
+    audio.onsuspend = () => {
+      console.log("[HTML Audio] suspend event fired - loading suspended");
+    };
+
     // Fallback: try playing after a delay if no events fire
-    // Use longer timeout to give network time to load
     setTimeout(() => {
-      if (!resolved && audio.paused) {
-        console.log("[Audio Playback] Fallback timeout triggered, readyState:", audio.readyState, "networkState:", audio.networkState);
+      if (!resolved && audio.paused && playAttempts === 0) {
+        console.log("[HTML Audio] Fallback timeout (2s) triggered, readyState:", audio.readyState, "networkState:", audio.networkState);
         if (audio.readyState >= 1) {
-          // At least have metadata, try to play
           attemptPlay();
         } else {
-          console.warn("[Audio Playback] Audio not ready after 2s, waiting for events...");
+          console.warn("[HTML Audio] Audio not ready after 2s, will retry at 5s");
         }
       }
     }, 2000);
 
     // Last resort fallback - try playing after 5 seconds no matter what
     setTimeout(() => {
-      if (!resolved && audio.paused) {
-        console.log("[Audio Playback] Last resort fallback at 5s, readyState:", audio.readyState);
+      if (!resolved && audio.paused && playAttempts === 0) {
+        console.log("[HTML Audio] Last resort fallback at 5s, readyState:", audio.readyState);
         attemptPlay();
       }
     }, 5000);
