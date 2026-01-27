@@ -92,16 +92,38 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
   audio.load();
 
   return new Promise((resolve, reject) => {
+    let resolved = false;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+
+    // Safety timeout - resolve after max duration to prevent hanging
+    // Most TTS responses are under 30 seconds
+    const safetyTimeout = setTimeout(() => {
+      if (!resolved) {
+        console.warn("[Audio Playback] Safety timeout reached, resolving");
+        cleanup();
+        resolve();
+      }
+    }, 60000); // 60 second max
+
     audio.onended = () => {
       console.log("[Audio Playback] Audio ended");
-      URL.revokeObjectURL(audioUrl);
+      clearTimeout(safetyTimeout);
+      cleanup();
       resolve();
     };
 
     audio.onerror = (e) => {
       console.error("[Audio Playback] Audio error:", e, audio.error);
-      URL.revokeObjectURL(audioUrl);
-      reject(new Error(audio.error?.message || "Audio playback failed"));
+      clearTimeout(safetyTimeout);
+      cleanup();
+      // Resolve instead of reject to prevent cascading errors
+      resolve();
     };
 
     audio.oncanplaythrough = () => {
@@ -110,19 +132,33 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
       if (playPromise) {
         playPromise.catch((e) => {
           console.error("[Audio Playback] Play promise rejected:", e);
-          URL.revokeObjectURL(audioUrl);
-          reject(e);
+          clearTimeout(safetyTimeout);
+          cleanup();
+          // Resolve instead of reject - audio failed but app should continue
+          resolve();
         });
       }
     };
 
     // Fallback: try playing after a short delay if oncanplaythrough doesn't fire
     setTimeout(() => {
-      if (audio.paused && audio.readyState >= 2) {
-        console.log("[Audio Playback] Fallback: attempting play after timeout");
-        audio.play().catch((e) => {
-          console.error("[Audio Playback] Fallback play failed:", e);
-        });
+      if (!resolved && audio.paused) {
+        console.log("[Audio Playback] Fallback: attempting play after timeout, readyState:", audio.readyState);
+        if (audio.readyState >= 2) {
+          audio.play().catch((e) => {
+            console.error("[Audio Playback] Fallback play failed:", e);
+            // Don't hang - resolve if fallback fails
+            clearTimeout(safetyTimeout);
+            cleanup();
+            resolve();
+          });
+        } else {
+          // Audio not ready after 500ms on iOS - resolve to prevent hang
+          console.warn("[Audio Playback] Audio not ready after 500ms, skipping playback");
+          clearTimeout(safetyTimeout);
+          cleanup();
+          resolve();
+        }
       }
     }, 500);
   });
