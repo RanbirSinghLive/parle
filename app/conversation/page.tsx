@@ -34,10 +34,14 @@ function isIOS(): boolean {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
-function unlockAudioForIOS() {
-  if (audioContextUnlocked) return;
+async function unlockAudioForIOS(): Promise<boolean> {
+  if (audioContextUnlocked) {
+    console.log("[iOS Audio] Audio already unlocked");
+    return true;
+  }
 
   console.log("[iOS Audio] Attempting to unlock audio context");
+  let unlocked = false;
 
   // Method 1: Create and play a silent Audio element
   try {
@@ -45,18 +49,12 @@ function unlockAudioForIOS() {
     // Data URI for a tiny silent MP3
     silentAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
     silentAudioElement.volume = 0.01;
-    const playPromise = silentAudioElement.play();
-    if (playPromise) {
-      playPromise.then(() => {
-        console.log("[iOS Audio] Silent audio played - audio context unlocked");
-        audioContextUnlocked = true;
-        silentAudioElement?.pause();
-      }).catch((e) => {
-        console.log("[iOS Audio] Silent audio play failed:", e.message);
-      });
-    }
+    await silentAudioElement.play();
+    console.log("[iOS Audio] Silent audio played - audio context unlocked");
+    silentAudioElement.pause();
+    unlocked = true;
   } catch (e) {
-    console.log("[iOS Audio] Audio element method failed:", e);
+    console.log("[iOS Audio] Silent audio play failed:", e instanceof Error ? e.message : e);
   }
 
   // Method 2: Create an AudioContext
@@ -65,18 +63,21 @@ function unlockAudioForIOS() {
     if (AudioContext) {
       const ctx = new AudioContext();
       if (ctx.state === "suspended") {
-        ctx.resume().then(() => {
-          console.log("[iOS Audio] AudioContext resumed");
-          audioContextUnlocked = true;
-        });
+        await ctx.resume();
+        console.log("[iOS Audio] AudioContext resumed");
+        unlocked = true;
       } else {
-        console.log("[iOS Audio] AudioContext already running");
-        audioContextUnlocked = true;
+        console.log("[iOS Audio] AudioContext already running, state:", ctx.state);
+        unlocked = true;
       }
     }
   } catch (e) {
     console.log("[iOS Audio] AudioContext method failed:", e);
   }
+
+  audioContextUnlocked = unlocked;
+  console.log("[iOS Audio] Unlock result:", unlocked);
+  return unlocked;
 }
 
 // Helper to play audio with iOS-friendly retry logic
@@ -87,17 +88,46 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
   const audioUrl = URL.createObjectURL(blob);
   const audio = new Audio();
 
+  // Set audio properties for better compatibility
+  audio.preload = "auto";
+  audio.volume = 1.0;
+
   // iOS needs load() to be called explicitly
   audio.src = audioUrl;
   audio.load();
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     let resolved = false;
+    let playAttempts = 0;
+    const maxPlayAttempts = 3;
 
     const cleanup = () => {
       if (!resolved) {
         resolved = true;
         URL.revokeObjectURL(audioUrl);
+      }
+    };
+
+    const attemptPlay = async () => {
+      playAttempts++;
+      console.log("[Audio Playback] Play attempt", playAttempts, "of", maxPlayAttempts, "readyState:", audio.readyState);
+
+      try {
+        await audio.play();
+        console.log("[Audio Playback] Play succeeded on attempt", playAttempts);
+      } catch (e) {
+        console.error("[Audio Playback] Play attempt", playAttempts, "failed:", e);
+
+        if (playAttempts < maxPlayAttempts) {
+          // Wait longer between retries
+          const retryDelay = playAttempts * 500;
+          console.log("[Audio Playback] Retrying in", retryDelay, "ms");
+          setTimeout(attemptPlay, retryDelay);
+        } else {
+          console.error("[Audio Playback] All play attempts failed");
+          cleanup();
+          resolve();
+        }
       }
     };
 
@@ -112,7 +142,7 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
     }, 60000); // 60 second max
 
     audio.onended = () => {
-      console.log("[Audio Playback] Audio ended");
+      console.log("[Audio Playback] Audio ended successfully");
       clearTimeout(safetyTimeout);
       cleanup();
       resolve();
@@ -126,41 +156,44 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
       resolve();
     };
 
+    // Listen for various ready events
     audio.oncanplaythrough = () => {
-      console.log("[Audio Playback] Can play through, starting playback");
-      const playPromise = audio.play();
-      if (playPromise) {
-        playPromise.catch((e) => {
-          console.error("[Audio Playback] Play promise rejected:", e);
-          clearTimeout(safetyTimeout);
-          cleanup();
-          // Resolve instead of reject - audio failed but app should continue
-          resolve();
-        });
+      if (!resolved && audio.paused) {
+        console.log("[Audio Playback] Can play through event fired, starting playback");
+        attemptPlay();
       }
     };
 
-    // Fallback: try playing after a short delay if oncanplaythrough doesn't fire
+    audio.onloadeddata = () => {
+      console.log("[Audio Playback] Loaded data event fired, readyState:", audio.readyState);
+      // If canplaythrough hasn't fired yet, try playing when data is loaded
+      if (!resolved && audio.paused && audio.readyState >= 2) {
+        console.log("[Audio Playback] Data loaded, attempting play");
+        attemptPlay();
+      }
+    };
+
+    // Fallback: try playing after a delay if no events fire
+    // Use longer timeout to give network time to load
     setTimeout(() => {
       if (!resolved && audio.paused) {
-        console.log("[Audio Playback] Fallback: attempting play after timeout, readyState:", audio.readyState);
-        if (audio.readyState >= 2) {
-          audio.play().catch((e) => {
-            console.error("[Audio Playback] Fallback play failed:", e);
-            // Don't hang - resolve if fallback fails
-            clearTimeout(safetyTimeout);
-            cleanup();
-            resolve();
-          });
+        console.log("[Audio Playback] Fallback timeout triggered, readyState:", audio.readyState, "networkState:", audio.networkState);
+        if (audio.readyState >= 1) {
+          // At least have metadata, try to play
+          attemptPlay();
         } else {
-          // Audio not ready after 500ms on iOS - resolve to prevent hang
-          console.warn("[Audio Playback] Audio not ready after 500ms, skipping playback");
-          clearTimeout(safetyTimeout);
-          cleanup();
-          resolve();
+          console.warn("[Audio Playback] Audio not ready after 2s, waiting for events...");
         }
       }
-    }, 500);
+    }, 2000);
+
+    // Last resort fallback - try playing after 5 seconds no matter what
+    setTimeout(() => {
+      if (!resolved && audio.paused) {
+        console.log("[Audio Playback] Last resort fallback at 5s, readyState:", audio.readyState);
+        attemptPlay();
+      }
+    }, 5000);
   });
 }
 
@@ -396,7 +429,8 @@ function ConversationContent() {
         const greeting = `Bonjour! Today we'll practice "${sessionTopic}". Let's start! Comment allez-vous?`;
         addMessage({ role: "tutor", content: greeting });
 
-        // Speak the greeting
+        // Note: Greeting audio may not play automatically due to browser autoplay policies
+        // The user will need to interact with the page first
         try {
           console.log("[Conversation] Requesting TTS for greeting:", greeting);
           const ttsResponse = await fetch("/api/tts", {
@@ -407,19 +441,18 @@ function ConversationContent() {
 
           console.log("[Conversation] Greeting TTS response status:", ttsResponse.status);
           console.log("[Conversation] Greeting TTS response ok:", ttsResponse.ok);
-          
+
           if (!ttsResponse.ok) {
             const errorText = await ttsResponse.text();
             console.error("[Conversation] Greeting TTS API returned error:", ttsResponse.status, errorText);
             throw new Error(`TTS API error: ${ttsResponse.status} - ${errorText}`);
           }
-          
+
           const contentType = ttsResponse.headers.get("content-type");
           console.log("[Conversation] Greeting TTS response content-type:", contentType);
-          
+
           if (contentType?.includes("audio/mpeg")) {
-            console.log("[Conversation] Playing ElevenLabs audio for greeting");
-            setSpeaking(true);
+            console.log("[Conversation] Received ElevenLabs audio for greeting");
             const audioBuffer = await ttsResponse.arrayBuffer();
             console.log("[Conversation] Greeting audio buffer size:", audioBuffer.byteLength, "bytes");
 
@@ -428,39 +461,30 @@ function ConversationContent() {
               throw new Error("Empty audio buffer");
             }
 
+            setSpeaking(true);
             try {
               await playAudioWithRetry(audioBuffer);
               console.log("[Conversation] Greeting audio playback completed");
             } catch (playError) {
-              console.error("[Conversation] Greeting audio playback failed:", playError);
-              throw playError;
+              console.error("[Conversation] Greeting audio playback failed (expected on first load):", playError);
+              // This is expected to fail on page load due to autoplay policy
             } finally {
               setSpeaking(false);
             }
           } else {
-            console.log("[Conversation] Falling back to browser TTS for greeting");
-            const responseData = await ttsResponse.json();
-            console.log("[Conversation] Greeting TTS API response:", responseData);
+            console.log("[Conversation] Using browser TTS for greeting");
             setSpeaking(true);
             try {
               await speakText(greeting, "fr-FR");
               console.log("[Conversation] Browser TTS for greeting completed");
             } catch (browserTTSError) {
-              console.error("[Conversation] Browser TTS error for greeting:", browserTTSError);
+              console.error("[Conversation] Browser TTS error for greeting (expected on first load):", browserTTSError);
             }
             setSpeaking(false);
           }
         } catch (error) {
-          console.error("[Conversation] TTS error for greeting, falling back to browser:", error);
-          console.error("[Conversation] Greeting TTS error details:", error instanceof Error ? error.message : String(error));
-          // Fallback to browser TTS
-          setSpeaking(true);
-          try {
-            await speakText(greeting, "fr-FR");
-            console.log("[Conversation] Browser TTS fallback for greeting completed");
-          } catch (browserTTSError) {
-            console.error("[Conversation] Browser TTS fallback error for greeting:", browserTTSError);
-          }
+          console.error("[Conversation] TTS error for greeting:", error);
+          // Greeting audio failure is not critical - user can still use the app
           setSpeaking(false);
         }
       }
@@ -544,7 +568,7 @@ function ConversationContent() {
 
   const handleRecordingStart = useCallback(async () => {
     // Unlock audio for iOS - must happen during user gesture
-    unlockAudioForIOS();
+    await unlockAudioForIOS();
 
     try {
       console.log("[Conversation] Starting recording...");
@@ -752,20 +776,19 @@ function ConversationContent() {
 
           console.log("[Conversation] TTS response status:", ttsResponse.status);
           console.log("[Conversation] TTS response ok:", ttsResponse.ok);
-          
+
           if (!ttsResponse.ok) {
             const errorText = await ttsResponse.text();
             console.error("[Conversation] TTS API returned error:", ttsResponse.status, errorText);
             throw new Error(`TTS API error: ${ttsResponse.status} - ${errorText}`);
           }
-          
+
           const contentType = ttsResponse.headers.get("content-type");
           console.log("[Conversation] TTS response content-type:", contentType);
 
           if (contentType?.includes("audio/mpeg")) {
             // ElevenLabs audio returned
-            console.log("[Conversation] Playing ElevenLabs audio");
-            setSpeaking(true);
+            console.log("[Conversation] Received ElevenLabs audio, preparing to play...");
             const audioBuffer = await ttsResponse.arrayBuffer();
             console.log("[Conversation] Audio buffer size:", audioBuffer.byteLength, "bytes");
 
@@ -774,39 +797,58 @@ function ConversationContent() {
               throw new Error("Empty audio buffer");
             }
 
+            // Ensure audio is unlocked before playing
+            await unlockAudioForIOS();
+
+            setSpeaking(true);
             try {
+              console.log("[Conversation] Starting ElevenLabs audio playback...");
               await playAudioWithRetry(audioBuffer);
-              console.log("[Conversation] Audio playback completed");
+              console.log("[Conversation] Audio playback completed successfully");
             } catch (playError) {
               console.error("[Conversation] Audio playback failed:", playError);
-              throw playError;
+              // Try browser TTS as fallback
+              console.log("[Conversation] Falling back to browser TTS after playback failure");
+              try {
+                await speakText(tutorResponse, "fr-FR");
+              } catch (e) {
+                console.error("[Conversation] Browser TTS fallback also failed:", e);
+              }
             } finally {
               setSpeaking(false);
             }
           } else {
             // Use browser TTS
-            console.log("[Conversation] Falling back to browser TTS");
+            console.log("[Conversation] ElevenLabs not configured, using browser TTS");
             const responseData = await ttsResponse.json();
             console.log("[Conversation] TTS API response:", responseData);
+
+            // Ensure audio is unlocked before speaking
+            await unlockAudioForIOS();
+
             setSpeaking(true);
             try {
+              console.log("[Conversation] Starting browser TTS...");
               await speakText(tutorResponse, "fr-FR");
               console.log("[Conversation] Browser TTS completed");
             } catch (browserTTSError) {
               console.error("[Conversation] Browser TTS error:", browserTTSError);
+              // Log a visible warning for debugging
+              console.warn("[Conversation] Audio failed to play - check browser TTS support");
             }
             setSpeaking(false);
           }
         } catch (ttsError) {
-          console.error("[Conversation] TTS error, falling back to browser:", ttsError);
+          console.error("[Conversation] TTS error:", ttsError);
           console.error("[Conversation] TTS error details:", ttsError instanceof Error ? ttsError.message : String(ttsError));
           // Fallback to browser TTS
+          await unlockAudioForIOS();
           setSpeaking(true);
           try {
             await speakText(tutorResponse, "fr-FR");
             console.log("[Conversation] Browser TTS fallback completed");
           } catch (browserTTSError) {
-            console.error("[Conversation] Browser TTS fallback error:", browserTTSError);
+            console.error("[Conversation] All audio playback methods failed:", browserTTSError);
           }
           setSpeaking(false);
         }
