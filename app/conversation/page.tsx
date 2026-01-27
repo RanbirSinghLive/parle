@@ -14,6 +14,9 @@ import { TranscriptEntry } from "@/lib/session";
 let audioContextUnlocked = false;
 let silentAudioElement: HTMLAudioElement | null = null;
 let sharedAudioContext: AudioContext | null = null;
+// Pre-warmed audio element for iOS - created during user gesture, reused for playback
+let preWarmedAudioElement: HTMLAudioElement | null = null;
+let pendingAudioResolve: (() => void) | null = null;
 
 // Detect iOS PWA mode
 function isIOSPWA(): boolean {
@@ -36,61 +39,79 @@ function isIOS(): boolean {
 }
 
 async function unlockAudioForIOS(): Promise<boolean> {
-  if (audioContextUnlocked && sharedAudioContext?.state === "running") {
-    console.log("[iOS Audio] Audio already unlocked, context state:", sharedAudioContext.state);
-    return true;
-  }
+  console.log("[iOS Audio] unlockAudioForIOS called");
+  console.log("[iOS Audio] Current state - unlocked:", audioContextUnlocked, "context:", sharedAudioContext?.state);
 
-  console.log("[iOS Audio] Attempting to unlock audio context");
+  // Always try to prime/re-prime on iOS during user gesture
+  const onIOS = isIOS();
+  console.log("[iOS Audio] Is iOS:", onIOS);
+
   let unlocked = false;
 
-  // Method 1: Create and play a silent Audio element
+  // Method 1: Create/reuse a pre-warmed Audio element (critical for iOS)
+  // This element is created during user gesture and reused for later playback
   try {
-    silentAudioElement = new Audio();
+    if (!preWarmedAudioElement) {
+      console.log("[iOS Audio] Creating new pre-warmed Audio element");
+      preWarmedAudioElement = new Audio();
+      preWarmedAudioElement.preload = "auto";
+      preWarmedAudioElement.volume = 1.0;
+      // iOS-specific attributes
+      (preWarmedAudioElement as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
+      preWarmedAudioElement.setAttribute("playsinline", "true");
+      preWarmedAudioElement.setAttribute("webkit-playsinline", "true");
+    }
+
+    // Play silent audio to "unlock" this element
     // Data URI for a tiny silent MP3
-    silentAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
-    silentAudioElement.volume = 0.01;
-    await silentAudioElement.play();
-    console.log("[iOS Audio] Silent audio played - audio context unlocked");
-    silentAudioElement.pause();
+    preWarmedAudioElement.src = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIgAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
+    preWarmedAudioElement.load();
+
+    console.log("[iOS Audio] Attempting to play silent audio on pre-warmed element...");
+    await preWarmedAudioElement.play();
+    console.log("[iOS Audio] Pre-warmed element played silent audio successfully");
+    preWarmedAudioElement.pause();
+    preWarmedAudioElement.currentTime = 0;
     unlocked = true;
   } catch (e) {
-    console.log("[iOS Audio] Silent audio play failed:", e instanceof Error ? e.message : e);
+    console.log("[iOS Audio] Pre-warmed element play failed:", e instanceof Error ? e.message : e);
+    // Don't give up - the element might still work for future playback
   }
 
-  // Method 2: Create/resume a shared AudioContext and keep it for playback
+  // Method 2: Also create/resume a shared AudioContext for Web Audio API
   try {
     const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof window.AudioContext }).webkitAudioContext;
     if (AudioContextClass) {
       // Reuse or create the shared context
       if (!sharedAudioContext || sharedAudioContext.state === "closed") {
         sharedAudioContext = new AudioContextClass();
-        console.log("[iOS Audio] Created new shared AudioContext");
+        console.log("[iOS Audio] Created new shared AudioContext, state:", sharedAudioContext.state);
       }
 
       if (sharedAudioContext.state === "suspended") {
         await sharedAudioContext.resume();
         console.log("[iOS Audio] Shared AudioContext resumed, state:", sharedAudioContext.state);
-        unlocked = true;
       } else {
-        console.log("[iOS Audio] Shared AudioContext already running, state:", sharedAudioContext.state);
-        unlocked = true;
+        console.log("[iOS Audio] Shared AudioContext state:", sharedAudioContext.state);
       }
 
-      // Play a tiny silent buffer to fully activate the context on iOS
-      const silentBuffer = sharedAudioContext.createBuffer(1, 1, 22050);
-      const source = sharedAudioContext.createBufferSource();
-      source.buffer = silentBuffer;
-      source.connect(sharedAudioContext.destination);
-      source.start(0);
-      console.log("[iOS Audio] Played silent buffer through AudioContext");
+      // Play a tiny silent buffer to fully activate the context
+      if (sharedAudioContext.state === "running") {
+        const silentBuffer = sharedAudioContext.createBuffer(1, 1, 22050);
+        const source = sharedAudioContext.createBufferSource();
+        source.buffer = silentBuffer;
+        source.connect(sharedAudioContext.destination);
+        source.start(0);
+        console.log("[iOS Audio] Played silent buffer through AudioContext");
+        unlocked = true;
+      }
     }
   } catch (e) {
     console.log("[iOS Audio] AudioContext method failed:", e);
   }
 
   audioContextUnlocked = unlocked;
-  console.log("[iOS Audio] Unlock result:", unlocked);
+  console.log("[iOS Audio] Unlock complete. Result:", unlocked, "preWarmedElement exists:", !!preWarmedAudioElement);
   return unlocked;
 }
 
@@ -98,6 +119,7 @@ async function unlockAudioForIOS(): Promise<boolean> {
 async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
   console.log("[Audio Playback] Starting playback, buffer size:", audioBuffer.byteLength);
   console.log("[Audio Playback] Is iOS:", isIOS());
+  console.log("[Audio Playback] PreWarmedElement exists:", !!preWarmedAudioElement);
   console.log("[Audio Playback] SharedAudioContext exists:", !!sharedAudioContext);
   console.log("[Audio Playback] SharedAudioContext state:", sharedAudioContext?.state);
 
@@ -107,11 +129,21 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
     throw new Error("Invalid audio buffer");
   }
 
-  // On iOS, try to use Web Audio API first, but fall back gracefully
+  // On iOS, use the pre-warmed Audio element for best compatibility
   if (isIOS()) {
-    console.log("[Audio Playback] iOS detected, attempting Web Audio API...");
+    console.log("[Audio Playback] iOS detected");
 
-    // Try to ensure AudioContext is ready
+    // Try using the pre-warmed Audio element first (most reliable on iOS)
+    if (preWarmedAudioElement) {
+      console.log("[Audio Playback] Using pre-warmed Audio element for iOS playback");
+      try {
+        return await playWithPreWarmedElement(audioBuffer);
+      } catch (preWarmedError) {
+        console.error("[Audio Playback] Pre-warmed element failed:", preWarmedError);
+      }
+    }
+
+    // Try Web Audio API as second option
     if (sharedAudioContext) {
       if (sharedAudioContext.state === "suspended") {
         console.log("[Audio Playback] Attempting to resume suspended AudioContext for iOS...");
@@ -124,28 +156,103 @@ async function playAudioWithRetry(audioBuffer: ArrayBuffer): Promise<void> {
       }
 
       if (sharedAudioContext.state === "running") {
-        console.log("[Audio Playback] Using Web Audio API for iOS playback");
+        console.log("[Audio Playback] Trying Web Audio API for iOS playback");
         try {
           return await playWithWebAudioAPI(audioBuffer);
         } catch (webAudioError) {
           console.error("[Audio Playback] Web Audio API failed on iOS:", webAudioError);
-          console.log("[Audio Playback] Falling back to HTML Audio for iOS");
         }
-      } else {
-        console.warn("[Audio Playback] AudioContext not running on iOS, state:", sharedAudioContext.state);
       }
-    } else {
-      console.warn("[Audio Playback] No shared AudioContext available on iOS");
     }
 
-    // Fall through to HTML Audio as fallback for iOS
-    console.log("[Audio Playback] Using HTML Audio element as fallback for iOS");
+    // Last resort: Try creating a new HTML Audio element
+    console.log("[Audio Playback] Falling back to new HTML Audio element for iOS");
     return playWithHTMLAudio(audioBuffer);
   }
 
   // Non-iOS: Use HTML Audio element
   console.log("[Audio Playback] Using HTML Audio element for playback (non-iOS)");
   return playWithHTMLAudio(audioBuffer);
+}
+
+// Play audio using the pre-warmed Audio element (best for iOS)
+async function playWithPreWarmedElement(audioBuffer: ArrayBuffer): Promise<void> {
+  console.log("[PreWarmed Audio] Starting playback with pre-warmed element");
+
+  if (!preWarmedAudioElement) {
+    throw new Error("No pre-warmed audio element available");
+  }
+
+  // Create blob URL for the audio data
+  const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+  const audioUrl = URL.createObjectURL(blob);
+  console.log("[PreWarmed Audio] Created blob URL");
+
+  return new Promise((resolve, reject) => {
+    const audio = preWarmedAudioElement!;
+    let resolved = false;
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true;
+        URL.revokeObjectURL(audioUrl);
+        audio.onended = null;
+        audio.onerror = null;
+        audio.oncanplaythrough = null;
+      }
+    };
+
+    // Safety timeout
+    const safetyTimeout = setTimeout(() => {
+      console.warn("[PreWarmed Audio] Safety timeout reached (60s)");
+      cleanup();
+      resolve();
+    }, 60000);
+
+    audio.onended = () => {
+      console.log("[PreWarmed Audio] Playback ended successfully");
+      clearTimeout(safetyTimeout);
+      cleanup();
+      resolve();
+    };
+
+    audio.onerror = (e) => {
+      console.error("[PreWarmed Audio] Error:", e, audio.error);
+      clearTimeout(safetyTimeout);
+      cleanup();
+      reject(new Error("Pre-warmed audio playback failed"));
+    };
+
+    // Set the new source and play
+    audio.src = audioUrl;
+    audio.load();
+
+    audio.oncanplaythrough = async () => {
+      if (resolved) return;
+      console.log("[PreWarmed Audio] canplaythrough fired, attempting play...");
+      try {
+        await audio.play();
+        console.log("[PreWarmed Audio] Play started successfully");
+      } catch (playError) {
+        console.error("[PreWarmed Audio] Play failed:", playError);
+        clearTimeout(safetyTimeout);
+        cleanup();
+        reject(playError);
+      }
+    };
+
+    // Also try playing after a short delay in case canplaythrough doesn't fire
+    setTimeout(async () => {
+      if (resolved || !audio.paused) return;
+      console.log("[PreWarmed Audio] Fallback: attempting play after 500ms delay");
+      try {
+        await audio.play();
+        console.log("[PreWarmed Audio] Fallback play started");
+      } catch (e) {
+        console.warn("[PreWarmed Audio] Fallback play failed:", e);
+      }
+    }, 500);
+  });
 }
 
 // Play audio using Web Audio API (better for iOS)
