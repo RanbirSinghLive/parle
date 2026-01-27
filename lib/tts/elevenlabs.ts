@@ -3,16 +3,28 @@ import { TTSService } from "./types";
 export class ElevenLabsTTSService implements TTSService {
   private apiKey: string;
   private voiceId: string;
+  private modelId: string;
 
-  constructor(apiKey: string, voiceId: string) {
-    this.apiKey = apiKey;
-    this.voiceId = voiceId;
+  constructor(apiKey: string, voiceId: string, modelId?: string) {
+    // Trim whitespace from voice ID to prevent issues
+    this.apiKey = apiKey.trim();
+    this.voiceId = voiceId.trim();
+    // Use multilingual model by default for better voice compatibility
+    // eleven_multilingual_v2 supports more voices and languages
+    // eleven_turbo_v2_5 is faster but may not support all voices
+    this.modelId = modelId?.trim() || process.env.ELEVENLABS_MODEL_ID?.trim() || "eleven_multilingual_v2";
+
+    console.log("[ElevenLabs] Service initialized with:");
+    console.log("[ElevenLabs]   Voice ID:", this.voiceId);
+    console.log("[ElevenLabs]   Voice ID length:", this.voiceId.length);
+    console.log("[ElevenLabs]   Model ID:", this.modelId);
   }
 
   async synthesize(text: string): Promise<ArrayBuffer | null> {
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${this.voiceId}`;
     console.log("[ElevenLabs] Synthesizing text, length:", text.length);
-    console.log("[ElevenLabs] Using voice ID:", this.voiceId);
+    console.log("[ElevenLabs] Using voice ID:", this.voiceId, "(length:", this.voiceId.length + ")");
+    console.log("[ElevenLabs] Using model ID:", this.modelId);
     console.log("[ElevenLabs] API endpoint:", url);
 
     try {
@@ -25,7 +37,7 @@ export class ElevenLabsTTSService implements TTSService {
         },
         body: JSON.stringify({
           text,
-          model_id: "eleven_turbo_v2_5", // Faster model with lower latency
+          model_id: this.modelId,
           voice_settings: {
             stability: 0.5,
             similarity_boost: 0.75,
