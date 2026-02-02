@@ -31,13 +31,13 @@ struct LessonPickerView: View {
                         .foregroundStyle(.white)
                         .background(
                             LinearGradient(
-                                colors: [Color("PrimaryBlue"), Color("PrimaryBlue").opacity(0.8)],
+                                colors: [Color.primaryBlue, Color.primaryBlue.opacity(0.8)],
                                 startPoint: .leading,
                                 endPoint: .trailing
                             )
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .shadow(color: Color("PrimaryBlue").opacity(0.3), radius: 8, y: 4)
+                        .shadow(color: Color.primaryBlue.opacity(0.3), radius: 8, y: 4)
                     }
 
                     // Lesson Categories
@@ -57,7 +57,7 @@ struct LessonPickerView: View {
                                             Image(systemName: topic.icon)
                                                 .font(.title2)
                                                 .frame(width: 32)
-                                                .foregroundStyle(Color("PrimaryBlue"))
+                                                .foregroundStyle(Color.primaryBlue)
                                             Text(topic.name)
                                                 .font(.body)
                                                 .foregroundStyle(.primary)

@@ -10,6 +10,15 @@ actor SupabaseService {
     private let baseURL: String
     private let anonKey: String
     private var accessToken: String?
+    private var refreshToken: String?
+    private var isRefreshing = false
+
+    /// Called after a successful token refresh so the caller can persist new tokens.
+    private var onTokenRefreshed: (@Sendable (_ accessToken: String, _ refreshToken: String) -> Void)?
+
+    func setOnTokenRefreshed(_ handler: @escaping @Sendable (_ accessToken: String, _ refreshToken: String) -> Void) {
+        self.onTokenRefreshed = handler
+    }
 
     init() {
         self.baseURL = Config.supabaseURL
@@ -22,14 +31,69 @@ actor SupabaseService {
         self.accessToken = token
     }
 
+    func setRefreshToken(_ token: String?) {
+        self.refreshToken = token
+    }
+
+    /// Refresh the access token using the stored refresh token.
+    private func refreshSessionToken() async -> Bool {
+        guard let refreshToken, !isRefreshing else { return false }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        do {
+            let body: [String: Any] = ["refresh_token": refreshToken]
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+
+            let url = URL(string: "\(baseURL)/auth/v1/token?grant_type=refresh_token")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue(anonKey, forHTTPHeaderField: "apikey")
+            request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = bodyData
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                print("[Supabase] Token refresh failed: \(String(data: data, encoding: .utf8) ?? "")")
+                return false
+            }
+
+            struct RefreshResponse: Codable {
+                let accessToken: String
+                let refreshToken: String
+                enum CodingKeys: String, CodingKey {
+                    case accessToken = "access_token"
+                    case refreshToken = "refresh_token"
+                }
+            }
+
+            let refreshResponse = try JSONDecoder().decode(RefreshResponse.self, from: data)
+            self.accessToken = refreshResponse.accessToken
+            self.refreshToken = refreshResponse.refreshToken
+
+            // Notify caller to persist new tokens
+            onTokenRefreshed?(refreshResponse.accessToken, refreshResponse.refreshToken)
+
+            print("[Supabase] Token refreshed successfully")
+            return true
+        } catch {
+            print("[Supabase] Token refresh error: \(error)")
+            return false
+        }
+    }
+
     // MARK: - Auth
 
     struct AuthResponse: Codable {
         let accessToken: String
+        let refreshToken: String?
         let user: AuthUser
 
         enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
+            case refreshToken = "refresh_token"
             case user
         }
     }
@@ -61,8 +125,11 @@ actor SupabaseService {
 
     func signUp(email: String, password: String) async throws -> AuthResponse {
         let body: [String: Any] = ["email": email, "password": password]
-        let data = try await post(path: "/auth/v1/signup", body: body)
-        return try JSONDecoder().decode(AuthResponse.self, from: data)
+        let data = try await post(path: "/auth/v1/signup", body: body, autoRefresh: false)
+        let response = try JSONDecoder().decode(AuthResponse.self, from: data)
+        self.accessToken = response.accessToken
+        if let rt = response.refreshToken { self.refreshToken = rt }
+        return response
     }
 
     func signIn(email: String, password: String) async throws -> AuthResponse {
@@ -72,10 +139,12 @@ actor SupabaseService {
         ]
         let data = try await post(
             path: "/auth/v1/token?grant_type=password",
-            body: body
+            body: body,
+            autoRefresh: false
         )
         let response = try JSONDecoder().decode(AuthResponse.self, from: data)
         self.accessToken = response.accessToken
+        if let rt = response.refreshToken { self.refreshToken = rt }
         return response
     }
 
@@ -88,17 +157,19 @@ actor SupabaseService {
 
     func setSession(accessToken: String, refreshToken: String) async throws -> AuthResponse {
         self.accessToken = accessToken
+        self.refreshToken = refreshToken
         // Use the access token to get user info
         var request = makeRequest(path: "/auth/v1/user", method: "GET")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         let user = try JSONDecoder().decode(AuthUser.self, from: data)
-        return AuthResponse(accessToken: accessToken, user: user)
+        return AuthResponse(accessToken: accessToken, refreshToken: refreshToken, user: user)
     }
 
     func signOut() {
         self.accessToken = nil
+        self.refreshToken = nil
     }
 
     // MARK: - Profile
@@ -214,10 +285,23 @@ actor SupabaseService {
 
     // MARK: - HTTP Helpers
 
-    private func get(path: String) async throws -> Data {
+    private func get(path: String, autoRefresh: Bool = true) async throws -> Data {
         var request = makeRequest(path: path, method: "GET")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response) = try await URLSession.shared.data(for: request)
+
+        // Auto-refresh on 401
+        if autoRefresh, let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            if await refreshSessionToken() {
+                // Retry with new token
+                var retryRequest = makeRequest(path: path, method: "GET")
+                retryRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+                let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                try validateResponse(retryResponse, data: retryData)
+                return retryData
+            }
+        }
+
         try validateResponse(response, data: data)
         return data
     }
@@ -225,7 +309,8 @@ actor SupabaseService {
     private func post(
         path: String,
         body: [String: Any],
-        returnRepresentation: Bool = false
+        returnRepresentation: Bool = false,
+        autoRefresh: Bool = true
     ) async throws -> Data {
         var request = makeRequest(path: path, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -234,16 +319,46 @@ actor SupabaseService {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
+
+        // Auto-refresh on 401
+        if autoRefresh, let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            if await refreshSessionToken() {
+                var retryRequest = makeRequest(path: path, method: "POST")
+                retryRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                if returnRepresentation {
+                    retryRequest.setValue("return=representation", forHTTPHeaderField: "Prefer")
+                }
+                retryRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                try validateResponse(retryResponse, data: retryData)
+                return retryData
+            }
+        }
+
         try validateResponse(response, data: data)
         return data
     }
 
-    private func patch(path: String, body: [String: Any]) async throws -> Data {
+    private func patch(path: String, body: [String: Any], autoRefresh: Bool = true) async throws -> Data {
         var request = makeRequest(path: path, method: "PATCH")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
+
+        // Auto-refresh on 401
+        if autoRefresh, let http = response as? HTTPURLResponse, http.statusCode == 401 {
+            if await refreshSessionToken() {
+                var retryRequest = makeRequest(path: path, method: "PATCH")
+                retryRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                retryRequest.setValue("return=representation", forHTTPHeaderField: "Prefer")
+                retryRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+                let (retryData, retryResponse) = try await URLSession.shared.data(for: retryRequest)
+                try validateResponse(retryResponse, data: retryData)
+                return retryData
+            }
+        }
+
         try validateResponse(response, data: data)
         return data
     }

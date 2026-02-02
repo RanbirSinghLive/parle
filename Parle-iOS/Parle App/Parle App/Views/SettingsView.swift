@@ -82,7 +82,7 @@ struct SettingsView: View {
                             .padding(.vertical, 10)
                             .background(
                                 profile.currentLevel == level.rawValue
-                                    ? Color("PrimaryBlue")
+                                    ? Color.primaryBlue
                                     : Color(.systemGray5)
                             )
                             .foregroundStyle(
@@ -118,7 +118,7 @@ struct SettingsView: View {
                             Spacer()
                             if profile.settings.correctionStyle.rawValue == value {
                                 Image(systemName: "checkmark")
-                                    .foregroundStyle(Color("PrimaryBlue"))
+                                    .foregroundStyle(Color.primaryBlue)
                             }
                         }
                     }
@@ -137,10 +137,10 @@ struct SettingsView: View {
                                 Task { await vm.updateTTSSpeed(userId: userId, speed: speed) }
                             }
                         ),
-                        in: 0.5...1.5,
-                        step: 0.1
+                        in: 0.5...2.0,
+                        step: 0.25
                     )
-                    .tint(Color("PrimaryBlue"))
+                    .tint(Color.primaryBlue)
 
                     HStack {
                         Text("Slower")
@@ -171,7 +171,7 @@ struct SettingsView: View {
                                 .padding(.vertical, 8)
                                 .background(
                                     profile.settings.dailyGoalMinutes == minutes
-                                        ? Color("PrimaryBlue")
+                                        ? Color.primaryBlue
                                         : Color(.systemGray5)
                                 )
                                 .foregroundStyle(

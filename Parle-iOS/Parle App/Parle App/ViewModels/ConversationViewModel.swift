@@ -152,6 +152,7 @@ final class ConversationViewModel: ObservableObject {
     // MARK: - Recording Start/Stop
 
     func startRecording() {
+        guard isSessionActive else { return }
         do {
             try audioService.startRecording()
             isRecording = true
@@ -233,15 +234,20 @@ final class ConversationViewModel: ObservableObject {
     /// Speak text using ElevenLabs, falling back to Apple TTS.
     private func speakText(_ text: String) async {
         isSpeaking = true
+        let speed = Float(profile?.settings.ttsSpeed ?? 1.0)
 
         do {
             // Try ElevenLabs first
             let audioData = try await elevenLabs.synthesize(text: text)
-            try await audioService.play(data: audioData)
+            print("[ConversationVM] ElevenLabs returned \(audioData.count) bytes, playing at \(speed)x...")
+            // Reconfigure audio session for playback (may have been left in recording mode)
+            audioService.configureForPlayback()
+            try await audioService.play(data: audioData, rate: speed)
+            print("[ConversationVM] ElevenLabs playback complete")
         } catch {
             print("[ConversationVM] ElevenLabs TTS failed, using Apple TTS: \(error)")
             // Fallback to Apple's built-in TTS
-            await AppleTTSService.shared.speak(text: text)
+            await AppleTTSService.shared.speak(text: text, rate: speed)
         }
 
         isSpeaking = false

@@ -20,7 +20,7 @@ struct LoginView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "mic.circle.fill")
                         .font(.system(size: 64))
-                        .foregroundStyle(Color("PrimaryBlue"))
+                        .foregroundStyle(Color.primaryBlue)
                     Text("Parle")
                         .font(.largeTitle.bold())
                     Text("Voice-first French tutoring")
@@ -30,7 +30,39 @@ struct LoginView: View {
 
                 Spacer().frame(height: 20)
 
-                // Form
+                // Google Sign In
+                VStack(spacing: 16) {
+                    Button {
+                        authVM.signInWithGoogle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "globe")
+                                .font(.title3)
+                            Text("Continue with Google")
+                        }
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(.separator), lineWidth: 1)
+                    )
+                    .disabled(authVM.isLoading)
+
+                    // Divider
+                    HStack {
+                        Rectangle().frame(height: 1).foregroundStyle(Color(.separator))
+                        Text("or").font(.caption).foregroundStyle(.secondary)
+                        Rectangle().frame(height: 1).foregroundStyle(Color(.separator))
+                    }
+                }
+                .padding(.horizontal, 32)
+
+                // Email Form
                 VStack(spacing: 16) {
                     if isSignUp {
                         TextField("Name", text: $name)
@@ -76,7 +108,7 @@ struct LoginView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(Color("PrimaryBlue"))
+                    .background(Color.primaryBlue)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .disabled(authVM.isLoading || email.isEmpty || password.isEmpty)
 
@@ -86,7 +118,7 @@ struct LoginView: View {
                     } label: {
                         Text(isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up")
                             .font(.subheadline)
-                            .foregroundStyle(Color("PrimaryBlue"))
+                            .foregroundStyle(Color.primaryBlue)
                     }
                 }
                 .padding(.horizontal, 32)

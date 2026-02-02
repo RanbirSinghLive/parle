@@ -83,7 +83,7 @@ struct HistoryView: View {
                         VStack(alignment: .trailing, spacing: 2) {
                             Text("\(summary.correctionsCount) corrections")
                                 .font(.subheadline)
-                                .foregroundStyle(Color("PrimaryBlue"))
+                                .foregroundStyle(Color.primaryBlue)
                             Text("\(summary.newVocabulary.count) new words")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -123,8 +123,8 @@ struct HistoryView: View {
                                         .font(.caption)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color("PrimaryBlue").opacity(0.1))
-                                        .foregroundStyle(Color("PrimaryBlue"))
+                                        .background(Color.primaryBlue.opacity(0.1))
+                                        .foregroundStyle(Color.primaryBlue)
                                         .clipShape(Capsule())
                                 }
                             }

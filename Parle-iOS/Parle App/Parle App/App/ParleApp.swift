@@ -47,6 +47,6 @@ struct MainTabView: View {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
         }
-        .tint(Color("PrimaryBlue"))
+        .tint(Color.primaryBlue)
     }
 }

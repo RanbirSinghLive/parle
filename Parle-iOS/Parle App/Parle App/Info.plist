@@ -10,6 +10,17 @@
     <array>
         <string>audio</string>
     </array>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>com.ranbir.parle-app</string>
+            </array>
+            <key>CFBundleURLName</key>
+            <string>com.ranbir.Parle-App</string>
+        </dict>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>Parle</string>
     <key>UILaunchStoryboardName</key>

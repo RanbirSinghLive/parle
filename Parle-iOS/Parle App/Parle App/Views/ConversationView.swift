@@ -46,7 +46,7 @@ struct ConversationView: View {
                     }
                 }
             }
-            .toolbarBackground(Color("PrimaryBlue"), for: .navigationBar)
+            .toolbarBackground(Color.primaryBlue, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
         }

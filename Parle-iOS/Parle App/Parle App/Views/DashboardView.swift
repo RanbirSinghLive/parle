@@ -32,9 +32,9 @@ struct DashboardView: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 16)
-                                .background(Color("PrimaryBlue"))
+                                .background(Color.primaryBlue)
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
-                                .shadow(color: Color("PrimaryBlue").opacity(0.3), radius: 8, y: 4)
+                                .shadow(color: Color.primaryBlue.opacity(0.3), radius: 8, y: 4)
                         }
                         .padding(.horizontal)
 
@@ -112,7 +112,7 @@ struct DashboardView: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "book.fill")
-                        .foregroundStyle(Color("PrimaryBlue"))
+                        .foregroundStyle(Color.primaryBlue)
                     Text(vm.profile?.currentLevel ?? "A1")
                         .font(.title2.bold())
                     Text("Level")
@@ -141,7 +141,7 @@ struct DashboardView: View {
             }
 
             ProgressView(value: vm.dailyProgress)
-                .tint(Color("PrimaryBlue"))
+                .tint(Color.primaryBlue)
 
             if vm.dailyProgress >= 1.0 {
                 Label("Goal completed!", systemImage: "checkmark.circle.fill")
@@ -230,7 +230,7 @@ struct DashboardView: View {
                     ForEach(vm.topicSummaries.prefix(5)) { topic in
                         HStack {
                             Image(systemName: topic.icon)
-                                .foregroundStyle(Color("PrimaryBlue"))
+                                .foregroundStyle(Color.primaryBlue)
                                 .frame(width: 24)
                             Text(topic.topic)
                                 .font(.subheadline)
@@ -282,7 +282,7 @@ struct DashboardView: View {
         HStack(spacing: 3) {
             ForEach(1...5, id: \.self) { i in
                 Circle()
-                    .fill(i <= level ? Color("PrimaryBlue") : Color(.systemGray4))
+                    .fill(i <= level ? Color.primaryBlue : Color(.systemGray4))
                     .frame(width: 6, height: 6)
             }
         }
@@ -323,7 +323,7 @@ struct DashboardView: View {
                         Spacer()
                         Text("\(session.summary?.correctionsCount ?? 0) corrections")
                             .font(.subheadline)
-                            .foregroundStyle(Color("PrimaryBlue"))
+                            .foregroundStyle(Color.primaryBlue)
                     }
                     .padding()
                     Divider()

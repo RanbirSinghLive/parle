@@ -40,7 +40,7 @@ struct MessageBubble: View {
 
     private var bubbleBackground: Color {
         message.role == .user
-            ? Color("PrimaryBlue")
+            ? Color.primaryBlue
             : Color(.systemGray6)
     }
 }

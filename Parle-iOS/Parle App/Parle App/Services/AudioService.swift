@@ -42,12 +42,22 @@ final class AudioService: NSObject, ObservableObject {
         }
     }
 
+    /// Re-activate audio session for playback after recording.
+    func configureForPlayback() {
+        configureAudioSession()
+    }
+
     // MARK: - Recording
 
     /// Start recording audio. Always works — no permission dance on subsequent calls.
     func startRecording() throws {
         // Clean up any previous recording
         audioRecorder?.stop()
+
+        // Re-activate audio session before each recording.
+        // The session can become deactivated by the system after permission
+        // dialogs, interruptions, or other apps taking the audio route.
+        configureAudioSession()
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
@@ -80,13 +90,18 @@ final class AudioService: NSObject, ObservableObject {
     // MARK: - Playback
 
     /// Play MP3 data from ElevenLabs TTS. Just works — no gesture context needed.
-    func play(data: Data) async throws {
+    /// - Parameter rate: Playback speed multiplier (1.0 = normal, 2.0 = double speed).
+    func play(data: Data, rate: Float = 1.0) async throws {
         // Stop any current playback
         stop()
 
+        print("[AudioService] Creating player with \(data.count) bytes of audio data, rate: \(rate)x")
         audioPlayer = try AVAudioPlayer(data: data)
         audioPlayer?.delegate = self
+        audioPlayer?.enableRate = true
+        audioPlayer?.rate = rate
         audioPlayer?.prepareToPlay()
+        print("[AudioService] Player ready, duration: \(audioPlayer?.duration ?? 0)s")
 
         isPlaying = true
 

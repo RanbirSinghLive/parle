@@ -25,7 +25,7 @@ struct PushToTalkButton: View {
     private var buttonColor: Color {
         if isRecording { return .red }
         if isDisabled { return Color(.systemGray3) }
-        return Color("PrimaryBlue")
+        return Color.primaryBlue
     }
 
     var body: some View {

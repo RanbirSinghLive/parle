@@ -53,7 +53,7 @@ struct TranscriptView: View {
             Spacer().frame(height: 60)
             Image(systemName: "mic.fill")
                 .font(.system(size: 40))
-                .foregroundStyle(Color("PrimaryBlue").opacity(0.3))
+                .foregroundStyle(Color.primaryBlue.opacity(0.3))
             Text("Hold the button to speak")
                 .font(.headline)
                 .foregroundStyle(.secondary)

@@ -97,7 +97,7 @@ struct SessionSummaryView: View {
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
-                            .background(Color("PrimaryBlue"))
+                            .background(Color.primaryBlue)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
@@ -137,7 +137,7 @@ struct SessionSummaryView: View {
         VStack(spacing: 4) {
             Text(value)
                 .font(.title.bold())
-                .foregroundStyle(Color("PrimaryBlue"))
+                .foregroundStyle(Color.primaryBlue)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)

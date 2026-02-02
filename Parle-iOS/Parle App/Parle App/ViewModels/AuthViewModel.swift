@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import AuthenticationServices
 
 /// Authentication state management.
 @MainActor
@@ -12,14 +13,25 @@ final class AuthViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let supabase = SupabaseService.shared
+    private static let redirectScheme = "com.ranbir.parle-app"
+    private static let redirectURL = "\(redirectScheme)://callback"
 
     // MARK: - Session Check
 
     func checkSession() async {
+        // Set up callback so refreshed tokens get persisted to Keychain
+        await supabase.setOnTokenRefreshed { accessToken, refreshToken in
+            KeychainHelper.set(key: "access_token", value: accessToken)
+            KeychainHelper.set(key: "refresh_token", value: refreshToken)
+        }
+
         // Check for stored credentials in Keychain
         if let token = KeychainHelper.get(key: "access_token"),
            let id = KeychainHelper.get(key: "user_id") {
             await supabase.setAccessToken(token)
+            if let refreshToken = KeychainHelper.get(key: "refresh_token") {
+                await supabase.setRefreshToken(refreshToken)
+            }
             userId = id
             userEmail = KeychainHelper.get(key: "user_email")
             isAuthenticated = true
@@ -35,6 +47,9 @@ final class AuthViewModel: ObservableObject {
         do {
             let response = try await supabase.signIn(email: email, password: password)
             KeychainHelper.set(key: "access_token", value: response.accessToken)
+            if let rt = response.refreshToken {
+                KeychainHelper.set(key: "refresh_token", value: rt)
+            }
             KeychainHelper.set(key: "user_id", value: response.user.id)
             KeychainHelper.set(key: "user_email", value: response.user.email ?? email)
 
@@ -57,7 +72,6 @@ final class AuthViewModel: ObservableObject {
 
         do {
             let response = try await supabase.signUp(email: email, password: password)
-            await supabase.setAccessToken(response.accessToken)
 
             // Create profile
             try await supabase.createProfile(
@@ -67,6 +81,9 @@ final class AuthViewModel: ObservableObject {
             )
 
             KeychainHelper.set(key: "access_token", value: response.accessToken)
+            if let rt = response.refreshToken {
+                KeychainHelper.set(key: "refresh_token", value: rt)
+            }
             KeychainHelper.set(key: "user_id", value: response.user.id)
             KeychainHelper.set(key: "user_email", value: email)
 
@@ -81,11 +98,109 @@ final class AuthViewModel: ObservableObject {
         isLoading = false
     }
 
+    // MARK: - Google OAuth
+
+    func signInWithGoogle() {
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            let url = await supabase.oauthURL(
+                provider: "google",
+                redirectTo: Self.redirectURL
+            )
+
+            let session = ASWebAuthenticationSession(
+                url: url,
+                callbackURLScheme: Self.redirectScheme
+            ) { [weak self] callbackURL, error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let error {
+                        if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                            self.isLoading = false
+                            return
+                        }
+                        self.errorMessage = "Google sign in failed."
+                        print("[Auth] OAuth error: \(error)")
+                        self.isLoading = false
+                        return
+                    }
+
+                    guard let callbackURL,
+                          let fragment = callbackURL.fragment else {
+                        self.errorMessage = "Google sign in failed."
+                        self.isLoading = false
+                        return
+                    }
+
+                    await self.handleOAuthCallback(fragment: fragment)
+                }
+            }
+
+            session.presentationContextProvider = OAuthPresentationContext.shared
+            session.prefersEphemeralWebBrowserSession = false
+            session.start()
+        }
+    }
+
+    private func handleOAuthCallback(fragment: String) async {
+        // Parse tokens from URL fragment: access_token=...&refresh_token=...&...
+        let params = fragment.split(separator: "&").reduce(into: [String: String]()) { result, pair in
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                result[String(parts[0])] = String(parts[1])
+            }
+        }
+
+        guard let accessToken = params["access_token"] else {
+            errorMessage = "Google sign in failed. No token received."
+            isLoading = false
+            return
+        }
+
+        let refreshToken = params["refresh_token"] ?? ""
+
+        do {
+            let response = try await supabase.setSession(
+                accessToken: accessToken,
+                refreshToken: refreshToken
+            )
+
+            KeychainHelper.set(key: "access_token", value: accessToken)
+            KeychainHelper.set(key: "refresh_token", value: refreshToken)
+            KeychainHelper.set(key: "user_id", value: response.user.id)
+            KeychainHelper.set(key: "user_email", value: response.user.email ?? "")
+
+            // Ensure profile exists (first-time Google sign-in)
+            do {
+                _ = try await supabase.fetchProfile(userId: response.user.id)
+            } catch {
+                let displayName = response.user.userMetadata?.displayName
+                try await supabase.createProfile(
+                    userId: response.user.id,
+                    email: response.user.email ?? "",
+                    displayName: displayName
+                )
+            }
+
+            userId = response.user.id
+            userEmail = response.user.email
+            isAuthenticated = true
+        } catch {
+            errorMessage = "Google sign in failed."
+            print("[Auth] OAuth token error: \(error)")
+        }
+
+        isLoading = false
+    }
+
     // MARK: - Sign Out
 
     func signOut() async {
         await supabase.signOut()
         KeychainHelper.delete(key: "access_token")
+        KeychainHelper.delete(key: "refresh_token")
         KeychainHelper.delete(key: "user_id")
         KeychainHelper.delete(key: "user_email")
 
@@ -128,5 +243,19 @@ enum KeychainHelper {
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(query as CFDictionary)
+    }
+}
+
+// MARK: - OAuth Presentation Context
+
+final class OAuthPresentationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
+    static let shared = OAuthPresentationContext()
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first else {
+            return ASPresentationAnchor()
+        }
+        return window
     }
 }
