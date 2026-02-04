@@ -14,17 +14,18 @@ actor DeepgramService {
         let confidence: Double?
     }
 
-    /// Transcribe AAC audio data to French text.
+    /// Transcribe AAC audio data with multilingual code-switching (French/English).
     func transcribe(audioData: Data) async throws -> TranscriptionResult {
         guard !audioData.isEmpty else {
             throw ParleError.audio("Empty audio data")
         }
 
         // Build Deepgram URL with parameters
+        // Nova-3 with language=multi enables code-switching between French and English
         var components = URLComponents(string: "https://api.deepgram.com/v1/listen")!
         components.queryItems = [
-            URLQueryItem(name: "model", value: "nova-2"),
-            URLQueryItem(name: "language", value: "fr"),
+            URLQueryItem(name: "model", value: "nova-3"),
+            URLQueryItem(name: "language", value: "multi"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "smart_format", value: "true"),
         ]
