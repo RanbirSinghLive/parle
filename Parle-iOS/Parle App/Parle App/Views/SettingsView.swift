@@ -7,6 +7,11 @@ struct SettingsView: View {
     @StateObject private var vm = SettingsViewModel()
     @EnvironmentObject var authVM: AuthViewModel
 
+    // Local state to prevent flickering from immediate API calls
+    @State private var localTutorName: String = ""
+    @State private var localTTSSpeed: Double = 1.0
+    @State private var isSliderEditing = false
+
     var body: some View {
         NavigationStack {
             Group {
@@ -16,17 +21,30 @@ struct SettingsView: View {
                 } else if let profile = vm.profile {
                     settingsContent(profile)
                 } else {
-                    Text("Failed to load settings")
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: 20) {
+                        Spacer()
+                        Text("Failed to load settings")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Log Out", role: .destructive) {
+                            Task { await authVM.signOut() }
+                        }
+                        .padding(.bottom, 40)
+                    }
                 }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .background(Color(.systemGroupedBackground))
         }
-        .task {
+        .task(id: authVM.userId) {
             if let userId = authVM.userId {
                 await vm.fetchProfile(userId: userId)
+                // Sync local state after profile loads
+                if let profile = vm.profile {
+                    localTutorName = profile.settings.tutorName ?? ""
+                    localTTSSpeed = profile.settings.ttsSpeed
+                }
             }
         }
     }
@@ -35,14 +53,6 @@ struct SettingsView: View {
 
     private func settingsContent(_ profile: Profile) -> some View {
         Form {
-            // Status Message
-            if let msg = vm.statusMessage {
-                Section {
-                    Text(msg.text)
-                        .foregroundStyle(msg.type == .success ? .green : .red)
-                }
-            }
-
             // Profile
             Section("Profile") {
                 LabeledContent("Email", value: profile.email ?? "")
@@ -51,13 +61,11 @@ struct SettingsView: View {
 
             // Tutor Name
             Section {
-                TextField("Tutor Name", text: Binding(
-                    get: { profile.settings.tutorName ?? "" },
-                    set: { name in
+                TextField("Tutor Name", text: $localTutorName)
+                    .onSubmit {
                         guard let userId = authVM.userId else { return }
-                        Task { await vm.updateTutorName(userId: userId, name: name) }
+                        Task { await vm.updateTutorName(userId: userId, name: localTutorName) }
                     }
-                ))
             } header: {
                 Text("Your Tutor")
             } footer: {
@@ -90,7 +98,7 @@ struct SettingsView: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .disabled(vm.isSaving)
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -122,7 +130,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .disabled(vm.isSaving)
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -130,16 +138,19 @@ struct SettingsView: View {
             Section("Speech Speed") {
                 VStack {
                     Slider(
-                        value: Binding(
-                            get: { profile.settings.ttsSpeed },
-                            set: { speed in
-                                guard let userId = authVM.userId else { return }
-                                Task { await vm.updateTTSSpeed(userId: userId, speed: speed) }
-                            }
-                        ),
+                        value: $localTTSSpeed,
                         in: 0.5...2.0,
                         step: 0.25
-                    )
+                    ) {
+                        Text("Speed")
+                    } onEditingChanged: { editing in
+                        isSliderEditing = editing
+                        if !editing {
+                            // Save when user finishes dragging
+                            guard let userId = authVM.userId else { return }
+                            Task { await vm.updateTTSSpeed(userId: userId, speed: localTTSSpeed) }
+                        }
+                    }
                     .tint(Color.primaryBlue)
 
                     HStack {
@@ -147,7 +158,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Text(String(format: "%.1fx", profile.settings.ttsSpeed))
+                        Text(String(format: "%.1fx", localTTSSpeed))
                             .font(.headline)
                         Spacer()
                         Text("Faster")
@@ -179,7 +190,7 @@ struct SettingsView: View {
                                 )
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .disabled(vm.isSaving)
+                        .buttonStyle(.plain)
                     }
                 }
             }
