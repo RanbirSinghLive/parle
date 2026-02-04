@@ -64,7 +64,7 @@ struct DashboardView: View {
                 .background(Color(.systemGroupedBackground))
             }
         }
-        .task {
+        .task(id: authVM.userId) {
             if let userId = authVM.userId {
                 await vm.fetchData(userId: userId)
             }

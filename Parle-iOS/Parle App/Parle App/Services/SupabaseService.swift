@@ -37,7 +37,11 @@ actor SupabaseService {
 
     /// Refresh the access token using the stored refresh token.
     private func refreshSessionToken() async -> Bool {
-        guard let refreshToken, !isRefreshing else { return false }
+        guard let refreshToken, !isRefreshing else {
+            print("[Supabase] Cannot refresh: refreshToken=\(refreshToken != nil), isRefreshing=\(isRefreshing)")
+            return false
+        }
+        print("[Supabase] Attempting token refresh...")
         isRefreshing = true
         defer { isRefreshing = false }
 

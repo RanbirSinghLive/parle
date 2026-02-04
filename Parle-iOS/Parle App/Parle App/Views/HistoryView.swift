@@ -23,7 +23,7 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
-        .task {
+        .task(id: authVM.userId) {
             await fetchSessions()
         }
     }

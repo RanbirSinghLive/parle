@@ -11,6 +11,7 @@ final class AuthViewModel: ObservableObject {
     @Published var userEmail: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var needsOnboarding = false
 
     private let supabase = SupabaseService.shared
     private static let redirectScheme = "com.ranbir.parle-app"
@@ -34,6 +35,7 @@ final class AuthViewModel: ObservableObject {
             }
             userId = id
             userEmail = KeychainHelper.get(key: "user_email")
+            await checkOnboardingStatus(userId: id)
             isAuthenticated = true
         }
     }
@@ -49,12 +51,20 @@ final class AuthViewModel: ObservableObject {
             KeychainHelper.set(key: "access_token", value: response.accessToken)
             if let rt = response.refreshToken {
                 KeychainHelper.set(key: "refresh_token", value: rt)
+                await supabase.setRefreshToken(rt)
             }
             KeychainHelper.set(key: "user_id", value: response.user.id)
             KeychainHelper.set(key: "user_email", value: response.user.email ?? email)
 
+            // Set up callback so refreshed tokens get persisted to Keychain
+            await supabase.setOnTokenRefreshed { accessToken, refreshToken in
+                KeychainHelper.set(key: "access_token", value: accessToken)
+                KeychainHelper.set(key: "refresh_token", value: refreshToken)
+            }
+
             userId = response.user.id
             userEmail = response.user.email ?? email
+            await checkOnboardingStatus(userId: response.user.id)
             isAuthenticated = true
         } catch {
             errorMessage = "Sign in failed. Please check your credentials."
@@ -89,6 +99,7 @@ final class AuthViewModel: ObservableObject {
 
             userId = response.user.id
             userEmail = email
+            needsOnboarding = true  // New user always needs onboarding
             isAuthenticated = true
         } catch {
             errorMessage = "Sign up failed. Please try again."
@@ -173,6 +184,7 @@ final class AuthViewModel: ObservableObject {
             KeychainHelper.set(key: "user_email", value: response.user.email ?? "")
 
             // Ensure profile exists (first-time Google sign-in)
+            var isNewUser = false
             do {
                 _ = try await supabase.fetchProfile(userId: response.user.id)
             } catch {
@@ -182,10 +194,16 @@ final class AuthViewModel: ObservableObject {
                     email: response.user.email ?? "",
                     displayName: displayName
                 )
+                isNewUser = true
             }
 
             userId = response.user.id
             userEmail = response.user.email
+            if isNewUser {
+                needsOnboarding = true
+            } else {
+                await checkOnboardingStatus(userId: response.user.id)
+            }
             isAuthenticated = true
         } catch {
             errorMessage = "Google sign in failed."
@@ -207,6 +225,24 @@ final class AuthViewModel: ObservableObject {
         userId = nil
         userEmail = nil
         isAuthenticated = false
+        needsOnboarding = false
+    }
+
+    // MARK: - Onboarding
+
+    func checkOnboardingStatus(userId: String) async {
+        do {
+            let profile = try await supabase.fetchProfile(userId: userId)
+            needsOnboarding = !profile.settings.onboardingCompleted
+        } catch {
+            // If we can't fetch profile, assume new user needs onboarding
+            needsOnboarding = true
+            print("[Auth] Could not fetch profile for onboarding check: \(error)")
+        }
+    }
+
+    func completeOnboarding() {
+        needsOnboarding = false
     }
 }
 

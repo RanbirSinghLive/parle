@@ -8,8 +8,13 @@ struct ParleApp: App {
         WindowGroup {
             Group {
                 if authVM.isAuthenticated {
-                    MainTabView()
-                        .environmentObject(authVM)
+                    if authVM.needsOnboarding {
+                        OnboardingContainerView()
+                            .environmentObject(authVM)
+                    } else {
+                        MainTabView()
+                            .environmentObject(authVM)
+                    }
                 } else {
                     LoginView()
                         .environmentObject(authVM)

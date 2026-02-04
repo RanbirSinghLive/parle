@@ -35,6 +35,70 @@ enum CEFRLevel: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Native Language
+
+enum NativeLanguage: String, Codable, CaseIterable, Identifiable {
+    case english = "English"
+    case spanish = "Spanish"
+    case portuguese = "Portuguese"
+    case german = "German"
+    case italian = "Italian"
+    case mandarin = "Mandarin"
+    case japanese = "Japanese"
+    case korean = "Korean"
+    case arabic = "Arabic"
+    case other = "Other"
+
+    var id: String { rawValue }
+}
+
+// MARK: - Interest Topic
+
+enum InterestTopic: String, Codable, CaseIterable, Identifiable {
+    case travel
+    case food
+    case culture
+    case business
+    case dailyLife = "daily_life"
+    case movies
+    case music
+    case sports
+    case technology
+    case history
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .travel: return "Travel"
+        case .food: return "Food & Cooking"
+        case .culture: return "Quebec Culture"
+        case .business: return "Business"
+        case .dailyLife: return "Daily Life"
+        case .movies: return "Movies & TV"
+        case .music: return "Music"
+        case .sports: return "Sports"
+        case .technology: return "Technology"
+        case .history: return "History"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .travel: return "airplane"
+        case .food: return "fork.knife"
+        case .culture: return "theatermasks.fill"
+        case .business: return "briefcase.fill"
+        case .dailyLife: return "house.fill"
+        case .movies: return "film.fill"
+        case .music: return "music.note"
+        case .sports: return "sportscourt.fill"
+        case .technology: return "desktopcomputer"
+        case .history: return "books.vertical.fill"
+        }
+    }
+}
+
 // MARK: - User Settings
 
 struct UserSettings: Codable {
@@ -44,6 +108,12 @@ struct UserSettings: Codable {
     var targetLevel: CEFRLevel
     var dailyGoalMinutes: Int
     var tutorName: String?
+
+    // Onboarding fields
+    var onboardingCompleted: Bool
+    var nativeLanguage: String?
+    var learningReason: String?
+    var preferredTopics: [String]?
 
     enum CorrectionStyle: String, Codable {
         case duringPauses = "during_pauses"
@@ -58,6 +128,10 @@ struct UserSettings: Codable {
         case targetLevel = "target_level"
         case dailyGoalMinutes = "daily_goal_minutes"
         case tutorName = "tutor_name"
+        case onboardingCompleted = "onboarding_completed"
+        case nativeLanguage = "native_language"
+        case learningReason = "learning_reason"
+        case preferredTopics = "preferred_topics"
     }
 
     static let `default` = UserSettings(
@@ -66,7 +140,11 @@ struct UserSettings: Codable {
         ttsSpeed: 1.0,
         targetLevel: .a1,
         dailyGoalMinutes: 15,
-        tutorName: nil
+        tutorName: nil,
+        onboardingCompleted: false,
+        nativeLanguage: nil,
+        learningReason: nil,
+        preferredTopics: nil
     )
 }
 
